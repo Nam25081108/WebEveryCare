@@ -1,0 +1,6 @@
+@EveryCare.Api_HostAddress = http://localhost:5185
+
+GET {{EveryCare.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

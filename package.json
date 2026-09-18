@@ -1,0 +1,18 @@
+{
+  "name": "everycare-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "customer-web",
+    "admin-web",
+    "partner-web"
+  ],
+  "scripts": {
+    "dev:customer": "npm run dev --workspace @everycare/customer-web",
+    "dev:admin": "npm run dev --workspace @everycare/admin-web",
+    "dev:partner": "npm run dev --workspace @everycare/partner-web",
+    "dev:api": "dotnet run --project backend/EveryCare.Api/EveryCare.Api.csproj --launch-profile http",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

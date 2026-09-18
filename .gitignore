@@ -1,0 +1,11 @@
+node_modules/
+.next/
+*.tsbuildinfo
+.dotnet-home/
+.nuget/
+**/bin/
+**/obj/
+backend/SachNha.Api/App_Data/
+appsettings.Local.json
+.env*
+!.env.example

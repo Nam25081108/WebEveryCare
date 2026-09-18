@@ -1,0 +1,40 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { BadgeCheck, Ban, ExternalLink, FileImage, LoaderCircle, Lock, Mail, MapPin, RefreshCw, Search, Trash2, Unlock, UserCheck, Users, XCircle } from "lucide-react";
+
+const API=process.env.NEXT_PUBLIC_API_BASE_URL??"http://localhost:5185";
+type Application={id:string;fullName:string;phone:string;email:string;status:"Pending"|"Active"|"Locked";partnerType:"Individual"|"Team";teamName?:string;teamSize:number;isAvailable:boolean;availabilityDays:number;identityNumber:string;serviceAddress:string;latitude:number|null;longitude:number|null;verificationStatus:"Pending"|"Approved"|"Rejected";rejectionReason?:string;createdAt:string;reviewedAt?:string;approvalEmailSentAt?:string;approvalEmailError?:string;services:{slug:string;name:string}[];teamMembers:{id:string;fullName:string;phone:string;identityNumber?:string}[]};
+
+async function readApiResponse<T>(response:Response):Promise<T>{
+ const text=await response.text();let data:Record<string,unknown>|null=null;
+ try{data=text?JSON.parse(text) as Record<string,unknown>:null}catch{}
+ if(!response.ok){const message=typeof data?.message==="string"?data.message:text.includes("28P01")?"Backend không đăng nhập được PostgreSQL. Hãy cấu hình lại mật khẩu database và khởi động lại backend.":"Không thể tải hồ sơ đối tác.";throw new Error(message)}
+ if(!data&&text)throw new Error("Backend trả về dữ liệu không đúng định dạng JSON.");
+ return (data??{}) as T;
+}
+
+export function AdminPartnerApplications(){
+ const [items,setItems]=useState<Application[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [query,setQuery]=useState("");const [working,setWorking]=useState("");const [message,setMessage]=useState("");
+ async function load(){setLoading(true);setError("");try{const response=await fetch(`${API}/api/admin/partner-applications`,{cache:"no-store"});setItems(await readApiResponse<Application[]>(response))}catch(reason){setError(reason instanceof TypeError?"Không thể kết nối API ở cổng 5185.":reason instanceof Error?reason.message:"Không thể tải dữ liệu.")}finally{setLoading(false)}}
+ useEffect(()=>{void load()},[]);
+ const filtered=useMemo(()=>items.filter(x=>(x.fullName+x.phone+x.email+x.services.map(s=>s.name).join(" ")).toLowerCase().includes(query.toLowerCase())),[items,query]);
+ async function action(item:Application,kind:"approve"|"reject"|"status"|"delete"){
+  let body:string|undefined;let method="POST";let url=`${API}/api/admin/partner-applications/${item.id}/${kind}`;
+  if(kind==="reject"){const reason=prompt("Nhập lý do từ chối hồ sơ:","Thông tin hồ sơ chưa đầy đủ.");if(reason===null)return;body=JSON.stringify({reason});}
+  if(kind==="status"){method="PATCH";body=JSON.stringify({status:item.status==="Locked"?"Active":"Locked"});}
+  if(kind==="delete"){if(!confirm(`Xóa hồ sơ của ${item.fullName}? Dữ liệu sẽ được ẩn khỏi hệ thống.`))return;method="DELETE";url=`${API}/api/admin/partner-applications/${item.id}`;}
+  setWorking(item.id+kind);setMessage("");try{const response=await fetch(url,{method,headers:body?{"Content-Type":"application/json"}:undefined,body});const data=response.status===204?{}:await readApiResponse<{message?:string}>(response);setMessage(data.message??"Đã cập nhật hồ sơ.");await load()}catch(reason){setError(reason instanceof Error?reason.message:"Thao tác thất bại.")}finally{setWorking("")}
+ }
+ const label=(value:Application["verificationStatus"])=>value==="Pending"?"Chờ duyệt":value==="Approved"?"Đã duyệt":"Từ chối";
+ return <><div className="admin-v2-title row"><div><h1>Hồ sơ đối tác</h1><p>{items.filter(x=>x.verificationStatus==="Pending").length} hồ sơ đang chờ xét duyệt trong PostgreSQL</p></div><button className="admin-secondary" onClick={()=>void load()} disabled={loading}><RefreshCw className={loading?"spin":""}/>Làm mới</button></div>
+  {message&&<div className="admin-success-message"><BadgeCheck/>{message}</div>}{error&&<div className="admin-api-error">{error}</div>}
+  <div className="admin-toolbar"><div><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Tìm tên, điện thoại, Gmail hoặc dịch vụ..."/></div></div>
+  {loading?<div className="admin-empty"><LoaderCircle className="spin"/> Đang tải hồ sơ...</div>:<div className="partner-application-list">{filtered.map(item=><article key={item.id} className="partner-application-card"><header><div className="admin-person"><span>{item.partnerType==="Team"?<Users/>:<UserCheck/>}</span><div><strong>{item.teamName||item.fullName}</strong><small>{item.partnerType==="Team"?`Đội nhóm • ${item.teamSize} người`:`Cá nhân • ${item.fullName}`}</small></div></div><span className={`review-badge ${item.verificationStatus.toLowerCase()}`}>{label(item.verificationStatus)}</span></header>
+   <div className="application-details"><p><b>Liên hệ</b><span>{item.phone} • {item.email}</span></p><p><b>CCCD trưởng nhóm/cá nhân</b><span>{item.identityNumber}</span></p><p><b>Dịch vụ</b><span>{item.services.map(x=>x.name).join(", ")}</span></p><p><b>Lịch và nhận việc</b><span>{item.availabilityDays} ngày/tuần • {item.isAvailable?"Đang nhận lời mời":"Đang tắt nhận việc"}</span></p><p><b>Địa chỉ xuất phát</b><span>{item.serviceAddress}</span></p><p><b>Ngày gửi</b><span>{new Date(item.createdAt).toLocaleString("vi-VN")}</span></p>{item.rejectionReason&&<p><b>Lý do từ chối</b><span>{item.rejectionReason}</span></p>}</div>
+   {item.teamMembers.length>0&&<details><summary>Thông tin {item.teamMembers.length} thành viên còn lại</summary>{item.teamMembers.map(member=><p key={member.id}>{member.fullName} • {member.phone} {member.identityNumber&&`• CCCD ${member.identityNumber}`}</p>)}</details>}
+   <div className="application-links"><a href={`${API}/api/admin/partner-applications/${item.id}/documents/front`} target="_blank"><FileImage/>CCCD trước</a><a href={`${API}/api/admin/partner-applications/${item.id}/documents/back`} target="_blank"><FileImage/>CCCD sau</a>{item.latitude&&item.longitude&&<a href={`https://www.openstreetmap.org/?mlat=${item.latitude}&mlon=${item.longitude}#map=17/${item.latitude}/${item.longitude}`} target="_blank"><MapPin/>Xem vị trí <ExternalLink/></a>}</div>
+   {item.approvalEmailSentAt?<p className="email-status success"><Mail/>Đã gửi Gmail lúc {new Date(item.approvalEmailSentAt).toLocaleString("vi-VN")}</p>:item.verificationStatus==="Approved"&&<p className="email-status warning"><Mail/>Đã duyệt nhưng chưa gửi Gmail: {item.approvalEmailError}</p>}
+   <footer>{item.verificationStatus==="Pending"&&<><button className="admin-primary" disabled={!!working} onClick={()=>void action(item,"approve")}><BadgeCheck/>Duyệt và gửi Gmail</button><button className="admin-danger-outline" disabled={!!working} onClick={()=>void action(item,"reject")}><XCircle/>Từ chối</button></>}{item.verificationStatus==="Approved"&&<button className="admin-secondary" disabled={!!working} onClick={()=>void action(item,"status")}>{item.status==="Locked"?<><Unlock/>Mở khóa</>:<><Lock/>Khóa tài khoản</>}</button>}<button className="admin-danger-outline" disabled={!!working} onClick={()=>void action(item,"delete")}><Trash2/>Xóa</button>{working.startsWith(item.id)&&<LoaderCircle className="spin"/>}</footer>
+  </article>)}{filtered.length===0&&<div className="admin-empty">Không có hồ sơ phù hợp.</div>}</div>}</>;
+}
