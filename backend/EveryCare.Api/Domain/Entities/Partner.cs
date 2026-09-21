@@ -27,6 +27,8 @@ public sealed class PartnerProfile : BaseEntity
     public string? ApprovalEmailError { get; set; }
     public decimal AverageRating { get; set; }
     public int CompletedBookings { get; set; }
+    public decimal WalletBalance { get; set; }
+    public string? AvatarUrl { get; set; }
     public ICollection<PartnerTeamMember> TeamMembers { get; set; } = [];
     public ICollection<PartnerServiceCapability> ServiceCapabilities { get; set; } = [];
     public ICollection<PartnerAvailabilityRule> AvailabilityRules { get; set; } = [];

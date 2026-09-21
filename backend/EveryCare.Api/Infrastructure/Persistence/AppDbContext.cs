@@ -103,6 +103,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.AverageRating).HasPrecision(3, 2);
             entity.Property(x => x.ServiceAddress).HasMaxLength(500);
             entity.Property(x => x.ServiceRadiusKilometers).HasPrecision(5, 2);
+            entity.Property(x => x.WalletBalance).HasPrecision(14, 2);
+            entity.Property(x => x.AvatarUrl).HasMaxLength(500);
             entity.Property(x => x.ServiceLocation).HasColumnType("geography (point)");
             entity.Property(x => x.CurrentLocation).HasColumnType("geography (point)");
             entity.Property(x => x.RejectionReason).HasMaxLength(1000);
@@ -214,6 +216,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.ContactName).HasMaxLength(150);
             entity.Property(x => x.ContactPhone).HasMaxLength(20);
             entity.Property(x => x.AccommodationType).HasMaxLength(30);
+            entity.Property(x => x.CustomerRequest).HasMaxLength(1000);
+            entity.Property(x => x.IssueNote).HasMaxLength(1000);
             entity.Property(x => x.AreaSquareMeters).HasPrecision(8, 2);
             foreach (var property in new[] { nameof(Booking.BasePrice), nameof(Booking.SelectionFee), nameof(Booking.ExtraChargeTotal), nameof(Booking.CancellationFee), nameof(Booking.EstimatedTotal) })
                 entity.Property(property).HasPrecision(14, 2);
@@ -233,7 +237,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         });
         modelBuilder.Entity<BookingExtraCharge>(entity => { entity.ToTable("booking_extra_charges"); entity.Property(x => x.Amount).HasPrecision(14, 2); entity.Property(x => x.Status).HasConversion<string>(); entity.HasOne(x => x.Booking).WithMany(x => x.ExtraCharges).HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });
         modelBuilder.Entity<BookingPhoto>(entity => { entity.ToTable("booking_photos"); entity.Property(x => x.Type).HasConversion<string>(); entity.HasOne(x => x.Booking).WithMany(x => x.Photos).HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });
-        modelBuilder.Entity<Payment>(entity => { entity.ToTable("payments"); entity.HasIndex(x => x.BookingId).IsUnique(); entity.Property(x => x.Method).HasConversion<string>(); entity.Property(x => x.Status).HasConversion<string>(); entity.Property(x => x.Amount).HasPrecision(14, 2); entity.HasOne(x => x.Booking).WithOne(x => x.Payment).HasForeignKey<Payment>(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });
+        modelBuilder.Entity<Payment>(entity => { entity.ToTable("payments"); entity.HasIndex(x => x.BookingId).IsUnique(); entity.Property(x => x.Method).HasConversion<string>(); entity.Property(x => x.Status).HasConversion<string>(); foreach (var property in new[] { nameof(Payment.Amount), nameof(Payment.DepositAmount), nameof(Payment.RemainingAmount), nameof(Payment.RefundedAmount), nameof(Payment.PlatformFee), nameof(Payment.TaskerNetAmount) }) entity.Property(property).HasPrecision(14, 2); entity.HasOne(x => x.Booking).WithOne(x => x.Payment).HasForeignKey<Payment>(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });
         modelBuilder.Entity<Review>(entity => { entity.ToTable("reviews", table => table.HasCheckConstraint("ck_reviews_rating", "\"Rating\" BETWEEN 1 AND 5")); entity.HasIndex(x => x.BookingId).IsUnique(); entity.HasOne(x => x.Booking).WithOne(x => x.Review).HasForeignKey<Review>(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });
         modelBuilder.Entity<FavoritePartner>(entity => { entity.ToTable("favorite_partners"); entity.HasIndex(x => new { x.CustomerId, x.PartnerProfileId }).IsUnique(); entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade); entity.HasOne(x => x.PartnerProfile).WithMany().HasForeignKey(x => x.PartnerProfileId).OnDelete(DeleteBehavior.Cascade); });
         modelBuilder.Entity<PartnerNotification>(entity => { entity.ToTable("partner_notifications"); entity.HasIndex(x => new { x.PartnerUserId, x.IsRead, x.CreatedAt }); entity.Property(x => x.Type).HasMaxLength(50); entity.Property(x => x.Title).HasMaxLength(200); entity.HasOne(x => x.PartnerUser).WithMany().HasForeignKey(x => x.PartnerUserId).OnDelete(DeleteBehavior.Cascade); entity.HasOne(x => x.Booking).WithMany().HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.Cascade); });

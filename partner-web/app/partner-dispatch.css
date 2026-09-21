@@ -1,0 +1,42 @@
+.scheduled-job .cancel-job {
+  border: 1px solid #efc7c0;
+  background: #fff5f3;
+  color: #b84c3c;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.scheduled-job .cancel-job:disabled {
+  opacity: .55;
+}
+
+.scheduled-job.lifecycle-job {
+  flex-wrap: wrap;
+}
+
+.lifecycle-job .job-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lifecycle-job .job-actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: #0d6b57;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.lifecycle-job .job-actions .cancel-job {
+  border: 1px solid #efc7c0;
+  background: #fff5f3;
+  color: #b84c3c;
+}

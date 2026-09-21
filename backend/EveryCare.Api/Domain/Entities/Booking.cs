@@ -35,6 +35,12 @@ public sealed class Booking : BaseEntity
     public PartnerProfile? AssignedPartner { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public DateTimeOffset? TaskerConfirmedAt { get; set; }
+    public DateTimeOffset? ArrivedAt { get; set; }
+    public DateTimeOffset? CompletionReportedAt { get; set; }
+    public DateTimeOffset? CustomerConfirmedAt { get; set; }
+    public DateTimeOffset? IssueReportedAt { get; set; }
+    public string? IssueNote { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
     public string? CancellationReason { get; set; }
     public bool IsRecurring { get; set; }
@@ -43,6 +49,7 @@ public sealed class Booking : BaseEntity
     public string? ContactName { get; set; }
     public string? ContactPhone { get; set; }
     public string? AccommodationType { get; set; }
+    public string? CustomerRequest { get; set; }
     public ICollection<BookingAssignment> Assignments { get; set; } = [];
     public ICollection<BookingExtraCharge> ExtraCharges { get; set; } = [];
     public ICollection<BookingPhoto> Photos { get; set; } = [];
@@ -89,8 +96,16 @@ public sealed class Payment : BaseEntity
     public PaymentMethod Method { get; set; }
     public PaymentStatus Status { get; set; } = PaymentStatus.Pending;
     public decimal Amount { get; set; }
+    public decimal DepositAmount { get; set; }
+    public decimal RemainingAmount { get; set; }
+    public decimal RefundedAmount { get; set; }
+    public decimal PlatformFee { get; set; }
+    public decimal TaskerNetAmount { get; set; }
     public string? BankTransactionReference { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
+    public DateTimeOffset? DepositPaidAt { get; set; }
+    public DateTimeOffset? RemainingPaidAt { get; set; }
+    public DateTimeOffset? ReleasedAt { get; set; }
 }
 
 public sealed class Review : BaseEntity

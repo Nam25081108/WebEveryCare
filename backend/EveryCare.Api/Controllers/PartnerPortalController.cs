@@ -13,10 +13,11 @@ public sealed record AvailabilityOverrideInput(DateOnly Date, bool IsUnavailable
 public sealed record SaveAvailabilityRequest(List<AvailabilityRuleInput> Rules, List<AvailabilityOverrideInput> Overrides);
 public sealed record ToggleJobInvitationsRequest(bool Enabled);
 public sealed record RespondInvitationRequest(bool Accept);
+public sealed record CancelAssignedBookingRequest(string? Reason);
 
 [ApiController]
 [Route("api/partner")]
-public sealed class PartnerPortalController(AppDbContext db, PartnerSessionService sessions, PartnerAvailabilityService availability) : ControllerBase
+public sealed class PartnerPortalController(AppDbContext db, PartnerSessionService sessions, PartnerAvailabilityService availability, BookingDispatchService dispatch) : ControllerBase
 {
     [HttpPost("auth/login")]
     public async Task<IActionResult> Login(PartnerLoginRequest request, CancellationToken cancellationToken)
@@ -56,7 +57,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var user = await RequirePartnerAsync(cancellationToken);
         if (user is null) return Unauthorized(new { message = "Phiên đăng nhập đã hết hạn." });
         var profile = await db.PartnerProfiles.AsNoTracking().Include(x => x.ServiceCapabilities).ThenInclude(x => x.ServiceGroup).SingleAsync(x => x.UserId == user.Id, cancellationToken);
-        return Ok(new { user.Id, user.FullName, user.Phone, user.Email, PartnerProfileId = profile.Id, profile.PartnerType, profile.TeamName, profile.TeamSize, profile.IsAvailable, profile.ServiceAddress, profile.AverageRating, profile.CompletedBookings, Services = profile.ServiceCapabilities.Select(x => x.ServiceGroup.Name) });
+        return Ok(new { user.Id, user.FullName, user.Phone, user.Email, PartnerProfileId = profile.Id, profile.PartnerType, profile.TeamName, profile.TeamSize, profile.IsAvailable, profile.ServiceAddress, profile.AverageRating, profile.CompletedBookings, profile.WalletBalance, Services = profile.ServiceCapabilities.Select(x => x.ServiceGroup.Name) });
     }
 
     [HttpPatch("me/job-invitations")]
@@ -67,7 +68,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var profile = await db.PartnerProfiles.Include(x => x.ServiceCapabilities).SingleAsync(x => x.UserId == user.Id, cancellationToken);
         profile.IsAvailable = request.Enabled;
         await db.SaveChangesAsync(cancellationToken);
-        var invitationsCreated = request.Enabled ? await InviteToExistingBookingsAsync(profile, cancellationToken) : 0;
+        var invitationsCreated = request.Enabled ? await DispatchOpenAndCountAsync(profile.Id, cancellationToken) : 0;
         return Ok(new { profile.IsAvailable, invitationsCreated, message = request.Enabled
             ? invitationsCreated > 0 ? $"Đã bật nhận việc và gửi {invitationsCreated} lời mời phù hợp." : "Đã bật nhận lời mời công việc mới."
             : "Đã tắt lời mời mới; các đơn đã nhận vẫn được giữ." });
@@ -81,7 +82,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var profileId = await db.PartnerProfiles.Where(x => x.UserId == user.Id).Select(x => x.Id).SingleAsync(cancellationToken);
         var rules = await db.PartnerAvailabilityRules.AsNoTracking().Where(x => x.PartnerProfileId == profileId).OrderBy(x => x.DayOfWeek).Select(x => new { x.Id, x.DayOfWeek, x.StartTime, x.EndTime, x.IsActive }).ToListAsync(cancellationToken);
         var overrides = await db.PartnerAvailabilityOverrides.AsNoTracking().Where(x => x.PartnerProfileId == profileId && x.Date >= DateOnly.FromDateTime(DateTime.Today)).OrderBy(x => x.Date).Select(x => new { x.Id, x.Date, x.IsUnavailable, x.StartTime, x.EndTime, x.Note }).ToListAsync(cancellationToken);
-        var bookings = await db.Bookings.AsNoTracking().Where(x => x.AssignedPartnerId == profileId && x.ScheduledStartAt >= DateTimeOffset.UtcNow && x.Status != BookingStatus.Cancelled).OrderBy(x => x.ScheduledStartAt).Select(x => new { x.Id, x.Code, x.AddressSnapshot, x.ScheduledStartAt, x.ScheduledEndAt, x.Status, x.IsRecurring, x.RecurrenceRule }).ToListAsync(cancellationToken);
+        var bookings = await db.Bookings.AsNoTracking().Where(x => x.AssignedPartnerId == profileId && x.Status != BookingStatus.Cancelled && x.Status != BookingStatus.Completed).OrderBy(x => x.ScheduledStartAt).Select(x => new { x.Id, x.Code, x.AddressSnapshot, x.ScheduledStartAt, x.ScheduledEndAt, x.Status, x.IsRecurring, x.RecurrenceRule, x.CustomerRequest, x.TaskerConfirmedAt, x.ArrivedAt, x.StartedAt, x.CompletionReportedAt }).ToListAsync(cancellationToken);
         return Ok(new { rules, overrides, bookings });
     }
 
@@ -100,7 +101,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         db.PartnerAvailabilityOverrides.AddRange(request.Overrides.Select(x => new PartnerAvailabilityOverride { PartnerProfileId = profileId, Date = x.Date, IsUnavailable = x.IsUnavailable, StartTime = x.StartTime, EndTime = x.EndTime, Note = x.Note?.Trim() }));
         await db.SaveChangesAsync(cancellationToken);
         var invitationsCreated = profile.IsAvailable && request.Rules.Any(x => x.IsActive)
-            ? await InviteToExistingBookingsAsync(profile, cancellationToken)
+            ? await DispatchOpenAndCountAsync(profile.Id, cancellationToken)
             : 0;
         var message = !profile.IsAvailable
             ? "Đã cập nhật lịch. Hãy bật ‘Nhận lời mời công việc mới’ ở trang Tổng quan để được phân phối đơn."
@@ -118,7 +119,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var profileId = await db.PartnerProfiles.Where(x => x.UserId == user.Id).Select(x => x.Id).SingleAsync(cancellationToken);
         var items = await db.BookingAssignments.AsNoTracking().Where(x => x.PartnerProfileId == profileId)
             .OrderByDescending(x => x.InvitedAt).Take(100)
-            .Select(x => new { x.Id, x.Status, x.InvitedAt, x.ExpiresAt, x.DistanceMetersAtInvitation, x.Booking.Code, Service = x.Booking.ServiceGroup.Name, x.Booking.AddressSnapshot, x.Booking.ScheduledStartAt, x.Booking.ScheduledEndAt, x.Booking.RequiredWorkers, x.Booking.EstimatedTotal, x.Booking.IsRecurring, x.Booking.RecurrenceRule, BookingStatus = x.Booking.Status })
+            .Select(x => new { x.Id, x.Status, x.InvitedAt, x.ExpiresAt, x.DistanceMetersAtInvitation, x.Booking.Code, Service = x.Booking.ServiceGroup.Name, x.Booking.AddressSnapshot, x.Booking.ScheduledStartAt, x.Booking.ScheduledEndAt, x.Booking.RequiredWorkers, x.Booking.EstimatedTotal, x.Booking.IsRecurring, x.Booking.RecurrenceRule, x.Booking.CustomerRequest, BookingStatus = x.Booking.Status })
             .ToListAsync(cancellationToken);
         return Ok(items);
     }
@@ -128,29 +129,105 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
     {
         var user = await RequirePartnerAsync(cancellationToken);
         if (user is null) return Unauthorized();
-        var assignment = await db.BookingAssignments.Include(x => x.Booking).ThenInclude(x => x.Assignments).Include(x => x.PartnerProfile).SingleOrDefaultAsync(x => x.Id == assignmentId && x.PartnerProfile.UserId == user.Id, cancellationToken);
+        var assignment = await db.BookingAssignments.AsNoTracking().Include(x => x.Booking).Include(x => x.PartnerProfile).SingleOrDefaultAsync(x => x.Id == assignmentId && x.PartnerProfile.UserId == user.Id, cancellationToken);
         if (assignment is null) return NotFound(new { message = "Không tìm thấy lời mời." });
         if (assignment.Status != AssignmentStatus.Invited) return BadRequest(new { message = "Lời mời này đã được phản hồi." });
-        if (assignment.ExpiresAt <= DateTimeOffset.UtcNow) { assignment.Status = AssignmentStatus.Expired; await db.SaveChangesAsync(cancellationToken); return BadRequest(new { message = "Lời mời đã hết hạn." }); }
-        assignment.RespondedAt = DateTimeOffset.UtcNow;
+        if (assignment.ExpiresAt <= DateTimeOffset.UtcNow) { await db.BookingAssignments.Where(x => x.Id == assignmentId).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Expired).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken); return BadRequest(new { message = "Lời mời đã hết hạn." }); }
         if (!request.Accept)
         {
-            assignment.Status = AssignmentStatus.Rejected;
-            await db.SaveChangesAsync(cancellationToken);
+            await db.BookingAssignments.Where(x => x.Id == assignmentId && x.Status == AssignmentStatus.Invited).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Rejected).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken);
+            await dispatch.DispatchAsync(assignment.BookingId, cancellationToken);
             return Ok(new { message = "Đã từ chối lời mời." });
         }
         var end = assignment.Booking.ScheduledEndAt ?? assignment.Booking.ScheduledStartAt.AddHours(4);
         if (!await availability.IsAvailableAsync(assignment.PartnerProfileId, assignment.Booking.ScheduledStartAt, end, assignment.BookingId, cancellationToken)) return Conflict(new { message = "Lịch này không còn trống hoặc không nằm trong giờ làm việc bạn đã đăng ký." });
-        assignment.Status = AssignmentStatus.Accepted;
-        if (assignment.Booking.CleanerSelectionMode != CleanerSelectionMode.CustomerChooses && assignment.Booking.AssignedPartnerId is null)
+        if (assignment.Booking.CleanerSelectionMode == CleanerSelectionMode.CustomerChooses)
         {
-            assignment.Status = AssignmentStatus.Selected;
-            assignment.Booking.AssignedPartnerId = assignment.PartnerProfileId;
-            assignment.Booking.Status = BookingStatus.Assigned;
-            foreach (var other in assignment.Booking.Assignments.Where(x => x.Id != assignment.Id && x.Status == AssignmentStatus.Invited)) other.Status = AssignmentStatus.Released;
+            await db.BookingAssignments.Where(x => x.Id == assignmentId && x.Status == AssignmentStatus.Invited).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Accepted).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken);
+            return Ok(new { message = "Đã gửi xác nhận nhận việc. Khách hàng sẽ chọn người thực hiện.", Status = AssignmentStatus.Accepted });
         }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var claimed = await db.Bookings.Where(x => x.Id == assignment.BookingId && x.AssignedPartnerId == null &&
+            (x.Status == BookingStatus.Searching || x.Status == BookingStatus.NoPartnerFound))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.AssignedPartnerId, assignment.PartnerProfileId).SetProperty(x => x.Status, BookingStatus.Assigned), cancellationToken);
+        if (claimed == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return Conflict(new { message = "Đơn này vừa được một đối tác khác nhận." });
+        }
+        await db.BookingAssignments.Where(x => x.Id == assignmentId && x.Status == AssignmentStatus.Invited)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Selected).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken);
+        await db.BookingAssignments.Where(x => x.BookingId == assignment.BookingId && x.Id != assignmentId && x.Status == AssignmentStatus.Invited)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Released), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Ok(new { message = "Bạn đã nhận đơn và khung giờ đã được khóa.", Status = AssignmentStatus.Selected });
+    }
+
+    [HttpPost("me/bookings/{bookingId:guid}/cancel")]
+    public async Task<IActionResult> CancelAssignedBooking(Guid bookingId, CancelAssignedBookingRequest request, CancellationToken cancellationToken)
+    {
+        var user = await RequirePartnerAsync(cancellationToken);
+        if (user is null) return Unauthorized();
+        var profileId = await db.PartnerProfiles.Where(x => x.UserId == user.Id).Select(x => x.Id).SingleAsync(cancellationToken);
+        var booking = await db.Bookings.Include(x => x.Assignments).SingleOrDefaultAsync(x => x.Id == bookingId && x.AssignedPartnerId == profileId, cancellationToken);
+        if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
+        if (booking.Status is not (BookingStatus.Assigned or BookingStatus.PartnerTravelling) || booking.ScheduledStartAt <= DateTimeOffset.UtcNow)
+            return BadRequest(new { message = "Đơn đã bắt đầu hoặc không còn có thể hủy nhận." });
+        foreach (var selected in booking.Assignments.Where(x => x.PartnerProfileId == profileId && x.Status == AssignmentStatus.Selected)) selected.Status = AssignmentStatus.Released;
+        booking.AssignedPartnerId = null;
+        booking.Status = BookingStatus.Searching;
+        booking.CancellationReason = string.IsNullOrWhiteSpace(request.Reason) ? "Đối tác hủy nhận việc." : $"Đối tác hủy: {request.Reason.Trim()}";
         await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = assignment.Status == AssignmentStatus.Selected ? "Bạn đã nhận đơn và khung giờ đã được giữ." : "Đã gửi xác nhận nhận việc. Khách hàng sẽ chọn người thực hiện.", assignment.Status });
+        var invited = await dispatch.DispatchAsync(booking.Id, cancellationToken);
+        return Ok(new { message = invited > 0 ? $"Đã hủy nhận và gửi yêu cầu thay thế cho {invited} đối tác." : "Đã hủy nhận; hệ thống đang tiếp tục tìm người thay thế.", invitedPartners = invited });
+    }
+
+    [HttpPost("me/bookings/{bookingId:guid}/confirm")]
+    public async Task<IActionResult> ConfirmAssignedBooking(Guid bookingId, CancellationToken cancellationToken)
+    {
+        var booking = await AssignedBooking(bookingId, cancellationToken);
+        if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
+        if (booking.Status != BookingStatus.Assigned || booking.ScheduledStartAt <= DateTimeOffset.UtcNow) return BadRequest(new { message = "Không thể xác nhận đơn ở trạng thái hiện tại." });
+        booking.TaskerConfirmedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Đã xác nhận sẽ thực hiện lịch hẹn." });
+    }
+
+    [HttpPost("me/bookings/{bookingId:guid}/arrive")]
+    public async Task<IActionResult> Arrive(Guid bookingId, CancellationToken cancellationToken)
+    {
+        var booking = await AssignedBooking(bookingId, cancellationToken);
+        if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
+        if (booking.Status != BookingStatus.Assigned || booking.TaskerConfirmedAt is null) return BadRequest(new { message = "Tasker cần xác nhận lịch trước khi check-in." });
+        booking.Status = BookingStatus.PartnerTravelling;
+        booking.ArrivedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Đã check-in: Tasker đã đến địa chỉ." });
+    }
+
+    [HttpPost("me/bookings/{bookingId:guid}/start")]
+    public async Task<IActionResult> Start(Guid bookingId, CancellationToken cancellationToken)
+    {
+        var booking = await AssignedBooking(bookingId, cancellationToken);
+        if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
+        if (booking.Status != BookingStatus.PartnerTravelling) return BadRequest(new { message = "Hãy check-in trước khi bắt đầu." });
+        booking.Status = BookingStatus.InProgress;
+        booking.StartedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Đã bắt đầu thực hiện công việc." });
+    }
+
+    [HttpPost("me/bookings/{bookingId:guid}/complete")]
+    public async Task<IActionResult> ReportCompleted(Guid bookingId, CancellationToken cancellationToken)
+    {
+        var booking = await AssignedBooking(bookingId, cancellationToken);
+        if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
+        if (booking.Status != BookingStatus.InProgress) return BadRequest(new { message = "Đơn chưa ở trạng thái đang thực hiện." });
+        booking.Status = BookingStatus.AwaitingCustomerConfirmation;
+        booking.CompletionReportedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Đã báo hoàn thành. Đang chờ khách xác nhận trong 24 giờ." });
     }
 
     [HttpGet("me/notifications")]
@@ -168,56 +245,19 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         return user is { Role: UserRole.Partner, Status: UserStatus.Active } ? user : null;
     }
 
-    private async Task<int> InviteToExistingBookingsAsync(PartnerProfile profile, CancellationToken cancellationToken)
+    private async Task<Booking?> AssignedBooking(Guid bookingId, CancellationToken cancellationToken)
     {
-        if (profile.ServiceLocation is null) return 0;
-        var serviceGroupIds = profile.ServiceCapabilities.Select(x => x.ServiceGroupId).ToArray();
-        var query = db.Bookings
-            .Include(x => x.ServiceGroup).Include(x => x.Assignments)
-            .Where(x => x.ScheduledStartAt > DateTimeOffset.UtcNow &&
-                (x.Status == BookingStatus.Searching || x.Status == BookingStatus.NoPartnerFound || x.Status == BookingStatus.AwaitingCustomerSelection) &&
-                x.CleanerSelectionMode != CleanerSelectionMode.FavoriteFirst &&
-                serviceGroupIds.Contains(x.ServiceGroupId) &&
-                x.LocationSnapshot != null && x.LocationSnapshot.Distance(profile.ServiceLocation) <= (double)profile.ServiceRadiusKilometers * 1000 &&
-                !x.Assignments.Any(a => a.PartnerProfileId == profile.Id));
-        if (profile.PartnerType == PartnerType.Individual) query = query.Where(x => x.RequiredWorkers == 1);
-        else query = query.Where(x => x.RequiredWorkers <= profile.TeamSize);
-        var bookings = await query.OrderBy(x => x.ScheduledStartAt).Take(50).ToListAsync(cancellationToken);
-        var created = 0;
-        foreach (var booking in bookings)
-        {
-            var end = booking.ScheduledEndAt ?? booking.ScheduledStartAt.AddHours(4);
-            if (!await availability.IsAvailableAsync(profile.Id, booking.ScheduledStartAt, end, booking.Id, cancellationToken)) continue;
-            var now = DateTimeOffset.UtcNow;
-            var expiresAt = new[] { now.AddHours(24), booking.ScheduledStartAt.AddHours(-1) }.Min();
-            if (expiresAt < now.AddMinutes(15)) expiresAt = now.AddMinutes(15);
-            db.BookingAssignments.Add(new BookingAssignment
-            {
-                Booking = booking, PartnerProfileId = profile.Id, Status = AssignmentStatus.Invited,
-                InvitedAt = now, ExpiresAt = expiresAt,
-                DistanceMetersAtInvitation = HaversineMeters(profile.ServiceLocation.Y, profile.ServiceLocation.X, booking.LocationSnapshot!.Y, booking.LocationSnapshot.X)
-            });
-            db.PartnerNotifications.Add(new PartnerNotification
-            {
-                PartnerUserId = profile.UserId, Booking = booking, Type = "new_booking", Title = "Có đơn dọn dẹp phù hợp",
-                Message = $"{booking.ServiceGroup.Name} tại {booking.AddressSnapshot}, bắt đầu {booking.ScheduledStartAt:dd/MM/yyyy HH:mm}."
-            });
-            if (booking.Status == BookingStatus.NoPartnerFound)
-                booking.Status = booking.CleanerSelectionMode == CleanerSelectionMode.CustomerChooses ? BookingStatus.AwaitingCustomerSelection : BookingStatus.Searching;
-            created++;
-        }
-        if (created > 0) await db.SaveChangesAsync(cancellationToken);
-        return created;
+        var user = await RequirePartnerAsync(cancellationToken);
+        if (user is null) return null;
+        var profileId = await db.PartnerProfiles.Where(x => x.UserId == user.Id).Select(x => x.Id).SingleAsync(cancellationToken);
+        return await db.Bookings.SingleOrDefaultAsync(x => x.Id == bookingId && x.AssignedPartnerId == profileId, cancellationToken);
     }
 
-    private static double HaversineMeters(double latitude1, double longitude1, double latitude2, double longitude2)
+    private async Task<int> DispatchOpenAndCountAsync(Guid profileId, CancellationToken cancellationToken)
     {
-        const double earthRadius = 6_371_000;
-        var lat1 = latitude1 * Math.PI / 180;
-        var lat2 = latitude2 * Math.PI / 180;
-        var deltaLat = (latitude2 - latitude1) * Math.PI / 180;
-        var deltaLon = (longitude2 - longitude1) * Math.PI / 180;
-        var a = Math.Sin(deltaLat / 2) * Math.Sin(deltaLat / 2) + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(deltaLon / 2) * Math.Sin(deltaLon / 2);
-        return earthRadius * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        var before = await db.BookingAssignments.CountAsync(x => x.PartnerProfileId == profileId, cancellationToken);
+        await dispatch.DispatchOpenBookingsAsync(cancellationToken);
+        var after = await db.BookingAssignments.CountAsync(x => x.PartnerProfileId == profileId, cancellationToken);
+        return Math.Max(0, after - before);
     }
 }

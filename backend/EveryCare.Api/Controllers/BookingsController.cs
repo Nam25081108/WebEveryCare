@@ -13,7 +13,7 @@ namespace EveryCare.Api.Controllers;
 
 [ApiController]
 [Route("api/bookings")]
-public sealed class BookingsController(AppDbContext db, PartnerAvailabilityService availability) : ControllerBase
+public sealed class BookingsController(AppDbContext db) : ControllerBase
 {
     [HttpPost]
     public async Task<IActionResult> Create(CreateBookingRequest request, CancellationToken cancellationToken)
@@ -152,7 +152,7 @@ public sealed class BookingsController(AppDbContext db, PartnerAvailabilityServi
             Customer = customer, Address = address, AddressSnapshot = request.FullAddress, LocationSnapshot = point,
             ServiceGroup = group, ServicePackage = package, ScheduledStartAt = request.ScheduledStartAt,
             ScheduledEndAt = request.ScheduledStartAt.AddMinutes(calculatedDurationMinutes),
-            Status = request.CleanerSelectionMode == CleanerSelectionMode.CustomerChooses ? BookingStatus.AwaitingCustomerSelection : BookingStatus.Searching,
+            Status = BookingStatus.Draft,
             CleanerSelectionMode = request.CleanerSelectionMode, RequiredWorkers = requiredWorkers,
             BuildingType = request.BuildingType, BuildingCondition = request.BuildingCondition, HasFurniture = request.HasFurniture,
             AreaSquareMeters = request.AreaSquareMeters, BasePrice = basePrice, SelectionFee = selectionFee, ExtraChargeTotal = extraChargeTotal, EstimatedTotal = basePrice + extraChargeTotal + selectionFee,
@@ -160,31 +160,19 @@ public sealed class BookingsController(AppDbContext db, PartnerAvailabilityServi
             FacilityName = group.Slug == "don-dep-buong-phong" ? request.FacilityName!.Trim() : null,
             ContactName = group.Slug == "don-dep-buong-phong" ? request.ContactName!.Trim() : null,
             ContactPhone = group.Slug == "don-dep-buong-phong" ? Regex.Replace(request.ContactPhone!, @"\s+", "") : null,
-            AccommodationType = group.Slug == "don-dep-buong-phong" ? request.AccommodationType : null
+            AccommodationType = group.Slug == "don-dep-buong-phong" ? request.AccommodationType : null,
+            CustomerRequest = string.IsNullOrWhiteSpace(request.CustomerRequest) ? null : request.CustomerRequest.Trim()
         };
         if (glassCleaningPrice > 0) booking.ExtraCharges.Add(new BookingExtraCharge { Description = request.IsRecurring ? "Lau kính (gói tháng)" : "Lau kính", Amount = glassCleaningPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
         if (carpetVacuumPrice > 0) booking.ExtraCharges.Add(new BookingExtraCharge { Description = request.IsRecurring ? "Hút bụi thảm văn phòng (gói tháng)" : "Hút bụi thảm văn phòng", Amount = carpetVacuumPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
         foreach (var charge in hospitalityCharges) booking.ExtraCharges.Add(new BookingExtraCharge { Description = charge.Description, Amount = charge.Amount, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
+        var depositAmount = Math.Round(booking.EstimatedTotal * .30m / 1_000m) * 1_000m;
+        booking.Payment = new Payment { Method = PaymentMethod.BankTransfer, Status = PaymentStatus.Pending, Amount = booking.EstimatedTotal, DepositAmount = depositAmount, RemainingAmount = booking.EstimatedTotal - depositAmount };
         db.Bookings.Add(booking);
-        await db.SaveChangesAsync(cancellationToken);
-
-        var partners = await FindAvailablePartners(group.Id, customer.Id, booking, cancellationToken);
-        var now = DateTimeOffset.UtcNow;
-        foreach (var partner in partners)
-        {
-            var distance = point is not null && partner.ServiceLocation is not null
-                ? HaversineMeters(partner.ServiceLocation.Y, partner.ServiceLocation.X, point.Y, point.X)
-                : (double?)null;
-            var expiresAt = new[] { now.AddHours(24), booking.ScheduledStartAt.AddHours(-1) }.Min();
-            if (expiresAt < now.AddMinutes(15)) expiresAt = now.AddMinutes(15);
-            db.BookingAssignments.Add(new BookingAssignment { Booking = booking, PartnerProfile = partner, Status = AssignmentStatus.Invited, InvitedAt = now, ExpiresAt = expiresAt, DistanceMetersAtInvitation = distance });
-            db.PartnerNotifications.Add(new PartnerNotification { PartnerUserId = partner.UserId, Booking = booking, Type = "new_booking", Title = "Có đơn dọn dẹp mới", Message = $"{group.Name} tại {request.FullAddress}, bắt đầu {request.ScheduledStartAt:dd/MM/yyyy HH:mm}." });
-        }
-        if (partners.Count == 0) booking.Status = BookingStatus.NoPartnerFound;
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return CreatedAtAction(nameof(GetByCode), new { code = booking.Code }, new { booking.Id, booking.Code, booking.Status, booking.EstimatedTotal, InvitedPartners = partners.Count, message = partners.Count > 0 ? "Đã tạo đơn và lưu lời mời cho đối tác có lịch rảnh phù hợp." : "Đã tạo đơn nhưng chưa tìm được đối tác có dịch vụ, vị trí và lịch rảnh phù hợp." });
+        return CreatedAtAction(nameof(GetByCode), new { code = booking.Code }, new { booking.Id, booking.Code, booking.Status, booking.EstimatedTotal, DepositAmount = depositAmount, RemainingAmount = booking.EstimatedTotal - depositAmount, InvitedPartners = 0, message = "Đơn đã được tạo. Vui lòng thanh toán cọc để bắt đầu tìm Tasker." });
     }
 
     [HttpGet("{code}")]
@@ -192,30 +180,6 @@ public sealed class BookingsController(AppDbContext db, PartnerAvailabilityServi
     {
         var booking = await db.Bookings.AsNoTracking().Where(x => x.Code == code).Select(x => new { x.Id, x.Code, x.Status, x.ScheduledStartAt, x.EstimatedTotal }).SingleOrDefaultAsync(cancellationToken);
         return booking is null ? NotFound() : Ok(booking);
-    }
-
-    private async Task<List<PartnerProfile>> FindAvailablePartners(Guid serviceGroupId, Guid customerId, Booking booking, CancellationToken cancellationToken)
-    {
-        var query = db.PartnerProfiles.Include(x => x.User).Where(x => x.IsAvailable && x.VerificationStatus == VerificationStatus.Approved && x.User.Status == UserStatus.Active && x.ServiceCapabilities.Any(capability => capability.ServiceGroupId == serviceGroupId));
-        if (booking.RequiredWorkers > 1) query = query.Where(x => x.PartnerType == PartnerType.Team && x.TeamSize >= booking.RequiredWorkers);
-        if (booking.LocationSnapshot is not null)
-        {
-            query = query.Where(x => x.ServiceLocation != null && x.ServiceLocation.Distance(booking.LocationSnapshot) <= (double)x.ServiceRadiusKilometers * 1000);
-        }
-        if (booking.CleanerSelectionMode == CleanerSelectionMode.FavoriteFirst)
-        {
-            var favoriteIds = db.FavoritePartners.Where(x => x.CustomerId == customerId).Select(x => x.PartnerProfileId);
-            query = query.Where(x => favoriteIds.Contains(x.Id));
-        }
-        var candidates = await query.OrderByDescending(x => x.AverageRating).Take(60).ToListAsync(cancellationToken);
-        var end = booking.ScheduledEndAt ?? booking.ScheduledStartAt.AddHours(4);
-        var matches = new List<PartnerProfile>();
-        foreach (var candidate in candidates)
-        {
-            if (await availability.IsAvailableAsync(candidate.Id, booking.ScheduledStartAt, end, booking.Id, cancellationToken)) matches.Add(candidate);
-            if (matches.Count == 30) break;
-        }
-        return matches;
     }
 
     private static AreaTier GetAreaTier(decimal area) => area switch
@@ -227,14 +191,4 @@ public sealed class BookingsController(AppDbContext db, PartnerAvailabilityServi
         _ => throw new ArgumentOutOfRangeException(nameof(area), "Diện tích phải từ 1 đến 500m².")
     };
 
-    private static double HaversineMeters(double latitude1, double longitude1, double latitude2, double longitude2)
-    {
-        const double earthRadius = 6_371_000;
-        var lat1 = latitude1 * Math.PI / 180;
-        var lat2 = latitude2 * Math.PI / 180;
-        var deltaLat = (latitude2 - latitude1) * Math.PI / 180;
-        var deltaLon = (longitude2 - longitude1) * Math.PI / 180;
-        var a = Math.Sin(deltaLat / 2) * Math.Sin(deltaLat / 2) + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(deltaLon / 2) * Math.Sin(deltaLon / 2);
-        return earthRadius * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
-    }
 }

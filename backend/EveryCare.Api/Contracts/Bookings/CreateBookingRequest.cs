@@ -27,7 +27,8 @@ public sealed record CreateBookingRequest(
     string? ContactName,
     string? ContactPhone,
     string? AccommodationType,
-    IReadOnlyList<HospitalityItemRequest>? HospitalityItems);
+    IReadOnlyList<HospitalityItemRequest>? HospitalityItems,
+    string? CustomerRequest);
 
 public sealed record HospitalityItemRequest(
     string Code,

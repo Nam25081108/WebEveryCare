@@ -18,6 +18,7 @@ public sealed class AdminBookingsController(AppDbContext db) : ControllerBase
             x.AddressSnapshot, x.ScheduledStartAt, x.Status, Cleaner = x.AssignedPartner != null ? x.AssignedPartner.User.FullName : null,
             x.EstimatedTotal, InvitedPartners = x.Assignments.Count, x.CreatedAt, x.IsRecurring, x.RecurrenceRule,
             x.FacilityName, x.ContactName, x.ContactPhone, x.AccommodationType,
+            x.CustomerRequest,
             Extras = x.ExtraCharges.Where(extra => extra.Status == EveryCare.Api.Domain.Enums.ExtraChargeStatus.Approved).Select(extra => new { extra.Description, extra.Amount })
         }).ToListAsync(cancellationToken);
         return Ok(bookings);

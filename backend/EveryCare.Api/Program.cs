@@ -28,6 +28,10 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddScoped<PartnerSessionService>();
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<PartnerAvailabilityService>();
+builder.Services.AddScoped<BookingDispatchService>();
+builder.Services.AddScoped<BookingLifecycleService>();
+builder.Services.AddHostedService<BookingDispatchWorker>();
+builder.Services.AddHostedService<BookingLifecycleWorker>();
 
 var app = builder.Build();
 

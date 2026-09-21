@@ -169,6 +169,9 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                         .HasPrecision(8, 2)
                         .HasColumnType("numeric(8,2)");
 
+                    b.Property<DateTimeOffset?>("ArrivedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid?>("AssignedPartnerId")
                         .HasColumnType("uuid");
 
@@ -207,6 +210,9 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("CompletionReportedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("ContactName")
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
@@ -220,8 +226,15 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
+                    b.Property<DateTimeOffset?>("CustomerConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("CustomerRequest")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<decimal>("EstimatedTotal")
                         .HasPrecision(14, 2)
@@ -243,6 +256,13 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsRecurring")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("IssueNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset?>("IssueReportedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Point>("LocationSnapshot")
                         .HasColumnType("geography (point)");
@@ -276,6 +296,9 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("TaskerConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -641,6 +664,10 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ApprovalEmailSentAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<decimal>("AverageRating")
                         .HasPrecision(3, 2)
                         .HasColumnType("numeric(3,2)");
@@ -714,6 +741,10 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
+
+                    b.Property<decimal>("WalletBalance")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
 
                     b.HasKey("Id");
 
@@ -859,6 +890,13 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
+                    b.Property<decimal>("DepositAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
+
+                    b.Property<DateTimeOffset?>("DepositPaidAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -869,9 +907,31 @@ namespace EveryCare.Api.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal>("PlatformFee")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
+
+                    b.Property<decimal>("RefundedAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
+
+                    b.Property<DateTimeOffset?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("RemainingAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
+
+                    b.Property<DateTimeOffset?>("RemainingPaidAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal>("TaskerNetAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

@@ -38,7 +38,7 @@ public sealed record ChangePartnerStatusRequest(UserStatus Status);
 public sealed class PartnerApplicationsController(AppDbContext db, IWebHostEnvironment environment) : ControllerBase
 {
     private static readonly string[] AllowedImageTypes = ["image/jpeg", "image/png", "image/webp"];
-    private static readonly string[] IndividualServices = ["ve-sinh-phong-le"];
+    private static readonly string[] IndividualServices = ["ve-sinh-phong-le", "don-dep-van-phong-dinh-ky", "don-dep-buong-phong"];
     private static readonly string[] TeamServices = ["tong-ve-sinh", "ve-sinh-chuyen-nghiep"];
 
     [HttpPost]
@@ -58,9 +58,9 @@ public sealed class PartnerApplicationsController(AppDbContext db, IWebHostEnvir
 
         var slugs = request.ServiceGroupSlugs.Distinct().ToArray();
         var allowed = request.PartnerType == PartnerType.Individual ? IndividualServices : TeamServices;
-        if (slugs.Length == 0 || slugs.Except(allowed).Any() || (request.PartnerType == PartnerType.Individual && slugs.Length != 1))
+        if (slugs.Length == 0 || slugs.Except(allowed).Any())
             return BadRequest(new { message = request.PartnerType == PartnerType.Individual
-                ? "Đối tác cá nhân chỉ được đăng ký dịch vụ dọn dẹp nhà cửa."
+                ? "Đối tác cá nhân chỉ được đăng ký dọn dẹp nhà cửa, văn phòng định kỳ hoặc buồng phòng."
                 : "Đội nhóm chỉ được đăng ký tổng vệ sinh hoặc vệ sinh chuyên nghiệp." });
 
         var groups = await db.ServiceGroups.Where(x => slugs.Contains(x.Slug) && x.IsActive).ToListAsync(cancellationToken);
@@ -103,6 +103,7 @@ public sealed class PartnerApplicationsController(AppDbContext db, IWebHostEnvir
             IsAvailable = false,
             ServiceAddress = request.ServiceAddress,
             ServiceLocation = point,
+            ServiceRadiusKilometers = 10,
             CurrentLocation = point,
             LocationUpdatedAt = DateTimeOffset.UtcNow
         };

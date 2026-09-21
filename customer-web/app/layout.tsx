@@ -3,6 +3,8 @@ import { AuthProvider } from "@/components/auth-provider";
 import "./globals.css";
 import "./auth.css";
 import "./booking-enhancements.css";
+import "./booking-request.css";
+import "./customer-bookings.css";
 import "./service-details.css";
 import "./address-book.css";
 import "./everycare-home.css";

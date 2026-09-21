@@ -1,12 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowDown, ArrowRight, Baby, CalendarCheck, Check, Gem, HeartHandshake, Home, MapPin, Sparkles, Star, Wrench } from "lucide-react";
+import { ArrowDown, ArrowRight, CalendarCheck, Check, Gem, HeartHandshake, MapPin, Sparkles, Star } from "lucide-react";
 import { Footer } from "@/components/footer";
 import { Reveal } from "@/components/reveal";
 import { ServiceExplorer } from "@/components/service-explorer";
 import { SiteHeader } from "@/components/site-header";
 import { HeroCarousel } from "@/components/hero-carousel";
-import { PARTNER_WEB_URL } from "@/lib/site-urls";
 
 export default function HomePage() {
   return <main className="ec-luxe-home">
@@ -23,7 +22,6 @@ export default function HomePage() {
           <p>EveryCare kết nối bạn với những chuyên gia được xác minh — từ không gian sống, người thân đến từng tiện ích nhỏ trong gia đình.</p>
           <div className="ec-luxe-actions">
             <Link href="/#dich-vu">Khám phá dịch vụ <ArrowRight /></Link>
-            <a href={PARTNER_WEB_URL}>Trở thành đối tác</a>
           </div>
           <div className="ec-luxe-proof">
             <div className="ec-luxe-avatars"><span>AN</span><span>TH</span><span>MN</span><span>+2k</span></div>
@@ -81,8 +79,6 @@ export default function HomePage() {
     <section className="ec-luxe-manifesto"><Image src="/images/everycare-hero.png" alt="Không gian sống sang trọng được EveryCare chăm sóc" fill sizes="100vw"/><div className="ec-luxe-manifesto-overlay"/><Reveal className="shell ec-luxe-manifesto-inner"><span>THE EVERYCARE PROMISE</span><h2>Thời gian của bạn<br/>là điều quý giá.</h2><p>Hãy dành nó cho những khoảnh khắc đáng nhớ.<br/>Phần còn lại, để EveryCare chăm lo.</p><Link href="/dat-lich">Bắt đầu trải nghiệm <ArrowRight/></Link></Reveal></section>
 
     <section className="ec-luxe-numbers"><div className="shell"><Reveal><span>18+</span><small>Dịch vụ thiết yếu</small></Reveal><Reveal delay={80}><span>100%</span><small>Đối tác được xác minh</small></Reveal><Reveal delay={160}><span>24/7</span><small>Lời mời được lưu</small></Reveal><Reveal delay={240}><span>TP.HCM</span><small>Khu vực phục vụ</small></Reveal></div></section>
-
-    <section className="ec-luxe-partner"><div className="shell"><Reveal><span>CỘNG ĐỒNG EVERYCARE</span><h2>Trao kỹ năng.<br/><em>Nhận giá trị xứng đáng.</em></h2><p>Chủ động lịch làm việc, tiếp cận những công việc phù hợp và phát triển thu nhập cùng một nền tảng chỉn chu.</p><a href={PARTNER_WEB_URL}>Gia nhập đội ngũ <ArrowRight/></a></Reveal><div className="ec-luxe-partner-orbit"><i><Home/></i><i><Baby/></i><i><Wrench/></i><strong><HeartHandshake/></strong></div></div></section>
 
     <Footer />
   </main>;
