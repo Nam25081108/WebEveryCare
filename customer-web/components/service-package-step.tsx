@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Bath, BedDouble, BriefcaseBusiness, Building2, Check, ChevronRight, CookingPot, FlaskConical, Home, Info, ListChecks, Sofa, Sparkles, SquareStack, Wrench, X } from "lucide-react";
 import { formatCurrency, professionalInfo, Service, ServicePlan, WorkDetails } from "@/lib/mock-data";
 import { calculateProfessionalPlan, ProfessionalConfig } from "@/lib/professional-pricing";
 
 type DetailModal = { type: "work"; title: string; details: WorkDetails } | { type: "process" } | { type: "tools" } | null;
-type StoredGroup = { id:string; status?:"active"|"locked"; process?:string[]; tools?:{name:string;description:string}[]; plans?:{id:string;name:string;price:number;details:string;status?:"active"|"locked";workDetails?:WorkDetails}[] };
 
 export function ServicePackageStep({ service, planId, onPlanChange, professionalConfig, onProfessionalChange, professionalError }: {
   service: Service;
@@ -17,19 +16,12 @@ export function ServicePackageStep({ service, planId, onPlanChange, professional
   professionalError: string;
 }) {
   const [modal, setModal] = useState<DetailModal>(null);
-  const [storedGroup, setStoredGroup] = useState<StoredGroup | null>(null);
   const professionalPlan = calculateProfessionalPlan(professionalConfig);
   const update = (patch: Partial<ProfessionalConfig>) => onProfessionalChange({ ...professionalConfig, ...patch });
-  useEffect(() => {
-    try {
-      const groups = JSON.parse(localStorage.getItem("everycare_admin_services_v2") ?? localStorage.getItem("everycare_admin_services") ?? "[]") as StoredGroup[];
-      setStoredGroup(groups.find((group) => group.id === service.id) ?? null);
-    } catch { setStoredGroup(null); }
-  }, [service.id]);
-  const displayedPlans: ServicePlan[] = storedGroup?.plans?.filter((plan)=>plan.status!=="locked").map((plan)=>({id:plan.id,name:plan.name,description:plan.details,meta:plan.details,price:plan.price,workDetails:plan.workDetails??service.plans.find(item=>item.id===plan.id)?.workDetails})) ?? service.plans;
+  const displayedPlans: ServicePlan[] = service.plans;
   const groupWorkDetails = displayedPlans.find((plan) => plan.workDetails)?.workDetails;
-  const process = storedGroup?.process?.length ? storedGroup.process : professionalInfo.process;
-  const tools = storedGroup?.tools?.length ? storedGroup.tools : professionalInfo.tools;
+  const process = professionalInfo.process;
+  const tools = professionalInfo.tools;
 
   return <div className="wizard-panel"><h2>Bạn cần dịch vụ nào?</h2><p>Chọn nhóm dịch vụ, sau đó cấu hình gói phù hợp với không gian.</p>
     {service.id !== "professional" ? <div><div className="booking-plans detailed-plans">{displayedPlans.map((item) => <div className={planId === item.id ? "booking-plan selected" : "booking-plan"} key={item.id} onClick={() => onPlanChange(item)} role="radio" aria-checked={planId === item.id} tabIndex={0}><input type="radio" name="plan" checked={planId === item.id} onChange={() => onPlanChange(item)}/><span><strong>{item.name}</strong><small>{item.description}{item.meta !== item.description ? ` • ${item.meta}` : ""}</small></span><b>{formatCurrency(item.price)}</b></div>)}</div>{groupWorkDetails && <button type="button" className="group-work-detail" onClick={() => setModal({ type:"work", title:service.name, details:groupWorkDetails })}><span><ListChecks/></span><span><strong>Chi tiết công việc</strong><small>Xem người dọn sẽ thực hiện những công việc gì tại từng phòng</small></span><ChevronRight/></button>}</div> : <div className="professional-config">

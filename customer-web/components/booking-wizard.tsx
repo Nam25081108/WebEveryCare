@@ -5,7 +5,7 @@ import { AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, Heart,
 import { useSearchParams } from "next/navigation";
 import { formatCurrency, ServicePlan, services } from "@/lib/mock-data";
 import { ServicePackageStep } from "@/components/service-package-step";
-import { calculateOfficePlan, defaultOfficeConfig, OfficeBookingConfig, OfficePackageStep } from "@/components/office-package-step";
+import { calculateOfficePlan, defaultOfficeConfig, OfficeBookingConfig, OfficePackageStep, type OfficePlan } from "@/components/office-package-step";
 import { calculateHospitalityPlan, defaultHospitalityConfig, hospitalityOptions, HospitalityBookingConfig, HospitalityPackageStep } from "@/components/hospitality-package-step";
 import { AddressStep } from "@/components/address-step";
 import { useAuth } from "@/components/auth-provider";
@@ -15,15 +15,13 @@ import type { MapLocation } from "@/components/partner-location-map";
 const steps = ["Địa chỉ", "Dịch vụ", "Thời gian", "Người dọn", "Xác nhận"];
 const officeWeekdayLabels: Record<string,string> = { mon:"Thứ 2", tue:"Thứ 3", wed:"Thứ 4", thu:"Thứ 5", fri:"Thứ 6", sat:"Thứ 7", sun:"Chủ nhật" };
 const officeWeekdayNumbers: Record<string,number> = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+const groupSlugs: Record<string,string> = { room:"ve-sinh-phong-le", deep:"tong-ve-sinh", professional:"ve-sinh-chuyen-nghiep", office:"don-dep-van-phong-dinh-ky", hospitality:"don-dep-buong-phong" };
 
 export function BookingWizard() {
   const { customer } = useAuth();
   const searchParams = useSearchParams();
   const initialService = searchParams.get("service") ?? "room";
   const requestedService = searchParams.get("service");
-  const visibleServices = requestedService && services.some((item) => item.id === requestedService)
-    ? services.filter((item) => item.id === requestedService)
-    : services;
   const initialPlan = searchParams.get("plan") ?? "";
   // Luôn bắt đầu bằng địa chỉ, kể cả khi khách đi vào từ một dịch vụ cụ thể.
   // Tham số `service` chỉ ghi nhớ nhóm dịch vụ để mở đúng gói ở bước kế tiếp.
@@ -49,16 +47,34 @@ export function BookingWizard() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState("");
   const [bookingResult, setBookingResult] = useState<{ code:string; invitedPartners:number; message:string; depositAmount?:number; remainingAmount?:number } | null>(null);
-  const service = services.find((item) => item.id === serviceId) ?? services[0];
+  const [catalogServices,setCatalogServices]=useState(services);
+  const [officeCatalogPlans,setOfficeCatalogPlans]=useState<OfficePlan[]>([]);
+  const visibleServices = requestedService && catalogServices.some((item) => item.id === requestedService) ? catalogServices.filter((item) => item.id === requestedService) : catalogServices;
+  const service = catalogServices.find((item) => item.id === serviceId) ?? catalogServices[0] ?? services[0];
   const bookingCategoryTitle = serviceId === "office" || serviceId === "hospitality"
     ? "Dịch vụ cho doanh nghiệp"
     : serviceId === "room" || serviceId === "deep" || serviceId === "professional"
       ? "Vệ sinh & dọn dẹp"
       : "Đặt dịch vụ";
   const standardPlan = service.plans.find((item) => item.id === planId) ?? service.plans[0];
-  const plan = serviceId === "professional" ? calculateProfessionalPlan(professionalConfig) : serviceId === "office" ? selectedPlan ?? calculateOfficePlan(officeConfig) : serviceId === "hospitality" ? selectedPlan ?? calculateHospitalityPlan(hospitalityConfig) : selectedPlan?.id === planId ? selectedPlan : standardPlan;
+  const plan = serviceId === "professional" ? calculateProfessionalPlan(professionalConfig) : serviceId === "office" ? selectedPlan ?? calculateOfficePlan(officeConfig,officeCatalogPlans.length?officeCatalogPlans:undefined) : serviceId === "hospitality" ? selectedPlan ?? calculateHospitalityPlan(hospitalityConfig) : selectedPlan?.id === planId ? selectedPlan : standardPlan;
   const total = (plan.price ?? 0) + (choice === "choose" ? 30000 : 0);
   const dates = useMemo(() => Array.from({ length: 7 }, (_, index) => { const value = new Date(); value.setDate(value.getDate() + index + 2); return value; }), []);
+
+  useEffect(()=>{
+    let active=true;
+    fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5185"}/api/service-groups`,{cache:"no-store"}).then(response=>response.ok?response.json():Promise.reject()).then((groups:Array<{slug:string;name:string;description:string;packages:Array<{slug:string;name:string;description:string|null;price:number;durationMinutes:number|null;requiredWorkers:number;maximumAreaSquareMeters:number|null}>}>)=>{
+      if(!active)return;
+      const slugToId:Record<string,string>={"ve-sinh-phong-le":"room","tong-ve-sinh":"deep","ve-sinh-chuyen-nghiep":"professional","don-dep-van-phong-dinh-ky":"office","don-dep-buong-phong":"hospitality"};
+      const planIds:Record<string,string>={"goi-1-gio":"r1","goi-2-gio":"r2","goi-3-gio":"r3","goi-4-gio":"r4","can-ho-60m2":"d1","nha-80m2":"d2","nha-100m2":"d3","nha-150m2":"d4","nha-200m2":"d5","cong-trinh-400m2":"d6"};
+      const available=groups.filter(group=>slugToId[group.slug]).map(group=>{const id=slugToId[group.slug];const fallback=services.find(item=>item.id===id)!;if(id==="office"||id==="hospitality"||id==="professional")return{...fallback,name:group.name,description:group.description};return{...fallback,name:group.name,description:group.description,plans:group.packages.map(item=>{const mappedId=planIds[item.slug]??item.slug;const previous=fallback.plans.find(plan=>plan.id===mappedId);return{id:mappedId,name:item.name,description:item.description??(item.maximumAreaSquareMeters?`Tối đa ${item.maximumAreaSquareMeters}m²`:""),meta:`${item.requiredWorkers} người${item.durationMinutes?` • ${item.durationMinutes/60} giờ`:""}`,price:item.price,workDetails:previous?.workDetails}})}});
+      setCatalogServices(available);
+      if(available.length&&!available.some(item=>item.id===serviceId))setServiceId(available[0].id);
+      const office=groups.find(group=>group.slug==="don-dep-van-phong-dinh-ky");
+      if(office)setOfficeCatalogPlans(office.packages.map(item=>{const area=Number(item.maximumAreaSquareMeters??100);return{id:`o${area}`,tier:area<=200?"under200":area<=400?"under400":"under900",area,people:item.requiredWorkers,hours:(item.durationMinutes??60)/60,price:item.price}}));
+    }).catch(()=>{});
+    return()=>{active=false};
+  },[]);
 
   useEffect(() => {
     if (searchParams.get("start") !== "address") return;
@@ -79,12 +95,13 @@ export function BookingWizard() {
   useEffect(() => {
     if (!customer) { setFavoriteTaskers([]); return; }
     let active = true;
-    fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5185"}/api/customer-favorites?phone=${encodeURIComponent(customer.phone)}`, { cache:"no-store" })
+    const requiredWorkers = Number(plan.meta.match(/(\d+)\s*người/i)?.[1] ?? 1);
+    fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5185"}/api/customer-favorites?phone=${encodeURIComponent(customer.phone)}&serviceGroupSlug=${encodeURIComponent(groupSlugs[serviceId])}&requiredWorkers=${requiredWorkers}`, { cache:"no-store" })
       .then(response => response.ok ? response.json() : [])
       .then(items => { if (active) setFavoriteTaskers(items); })
       .catch(() => { if (active) setFavoriteTaskers([]); });
     return () => { active = false; };
-  }, [customer]);
+  }, [customer, serviceId, plan.meta]);
 
   useEffect(() => { if (choice === "favorite" && favoriteTaskers.length === 0) setChoice("auto"); }, [choice, favoriteTaskers.length]);
 
@@ -163,24 +180,19 @@ export function BookingWizard() {
     const scheduledStart = new Date(dates[date]);
     scheduledStart.setHours(hours, minutes, 0, 0);
     if (serviceId === "office" && officeConfig.mode === "monthly") {
-      const firstDay = officeConfig.days[0];
-      const targetDay = officeWeekdayNumbers[firstDay];
       const now = new Date();
-      const daysUntilTarget = (targetDay - now.getDay() + 7) % 7;
-      scheduledStart.setTime(now.getTime());
-      scheduledStart.setDate(now.getDate() + daysUntilTarget);
-      scheduledStart.setHours(hours, minutes, 0, 0);
-      if (scheduledStart.getTime() < Date.now() + 2 * 24 * 60 * 60 * 1000) scheduledStart.setDate(scheduledStart.getDate() + 7);
+      const earliest = new Date(now.getTime()+2*24*60*60*1000);
+      const candidates=officeConfig.days.map(day=>{const candidate=new Date(earliest);const target=officeWeekdayNumbers[day];candidate.setDate(earliest.getDate()+((target-earliest.getDay()+7)%7));candidate.setHours(hours,minutes,0,0);if(candidate.getTime()<earliest.getTime())candidate.setDate(candidate.getDate()+7);return candidate}).sort((a,b)=>a.getTime()-b.getTime());
+      scheduledStart.setTime(candidates[0].getTime());
     }
     const [addressLabel, ...addressParts] = address.split("•");
-    const groupSlugs: Record<string,string> = { room:"ve-sinh-phong-le", deep:"tong-ve-sinh", professional:"ve-sinh-chuyen-nghiep", office:"don-dep-van-phong-dinh-ky", hospitality:"don-dep-buong-phong" };
     const packageSlugs: Record<string,string> = { r1:"goi-1-gio", r2:"goi-2-gio", r3:"goi-3-gio", r4:"goi-4-gio", d1:"can-ho-60m2", d2:"nha-80m2", d3:"nha-100m2", d4:"nha-150m2", d5:"nha-200m2", d6:"cong-trinh-400m2", o100:"van-phong-100m2", o150:"van-phong-150m2", o200:"van-phong-200m2", o250:"van-phong-250m2", o300:"van-phong-300m2", o400:"van-phong-400m2", o500:"van-phong-500m2", o750:"van-phong-750m2", o900:"van-phong-900m2" };
     const area = professionalConfig.areaTier === "under60" ? 59 : professionalConfig.areaTier === "60to80" ? 70 : professionalConfig.areaTier === "81to100" ? 90 : professionalConfig.customArea;
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5185"}/api/bookings`, {
         method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
           customerName:customer.fullName, customerPhone:customer.phone, addressLabel:addressLabel.trim() || "Địa chỉ", fullAddress:addressParts.join("•").trim() || address,
-          latitude:addressLocation?.latitude??null, longitude:addressLocation?.longitude??null, serviceGroupSlug:groupSlugs[serviceId], servicePackageSlug:serviceId === "professional" || serviceId === "hospitality" ? null : packageSlugs[planId],
+          latitude:addressLocation?.latitude??null, longitude:addressLocation?.longitude??null, serviceGroupSlug:groupSlugs[serviceId], servicePackageSlug:serviceId === "professional" || serviceId === "hospitality" ? null : packageSlugs[planId]??planId,
           scheduledStartAt:scheduledStart.toISOString(), cleanerSelectionMode:choice === "choose" ? "CustomerChooses" : choice === "favorite" ? "FavoriteFirst" : "Automatic",
           buildingType:serviceId === "professional" ? professionalConfig.building === "house" ? "House" : "Office" : null,
           buildingCondition:serviceId === "professional" ? professionalConfig.condition === "old" ? "Existing" : "NewOrRenovated" : null,
@@ -218,7 +230,7 @@ export function BookingWizard() {
 
         {step === 1 && <AddressStep value={address} error={addressError} onChange={setAddress} onLocationChange={setAddressLocation} onClearError={() => setAddressError("")}/>} 
 
-        {step === 2 && <div><div className="booking-service-tabs">{visibleServices.map((item) => <button onClick={() => selectService(item.id)} className={serviceId === item.id ? "active" : ""} key={item.id}>{item.shortName}</button>)}</div>{serviceId === "office" ? <OfficePackageStep config={officeConfig} onChange={(value, selected) => { setOfficeConfig(value); setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService(Boolean(value.mode)); setServiceError(""); if (value.mode === "monthly") setTime(value.startTime); }}/> : serviceId === "hospitality" ? <HospitalityPackageStep config={hospitalityConfig} onChange={(value, selected) => { setHospitalityConfig(value); setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService((selected.price??0)>0); setServiceError(""); }}/> : <ServicePackageStep service={service} planId={planId} onPlanChange={(selected) => { setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService(true); setServiceError(""); }} professionalConfig={professionalConfig} onProfessionalChange={(value) => { setProfessionalConfig(value); setProfessionalError(""); setHasSelectedService(true); setServiceError(""); }} professionalError={professionalError}/>} {serviceError && <div className="address-error" role="alert">{serviceError}</div>}</div>}
+        {step === 2 && <div><div className="booking-service-tabs">{visibleServices.map((item) => <button onClick={() => selectService(item.id)} className={serviceId === item.id ? "active" : ""} key={item.id}>{item.shortName}</button>)}</div>{serviceId === "office" ? <OfficePackageStep config={officeConfig} plans={officeCatalogPlans.length?officeCatalogPlans:undefined} onChange={(value, selected) => { setOfficeConfig(value); setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService(Boolean(value.mode)); setServiceError(""); if (value.mode === "monthly") setTime(value.startTime); }}/> : serviceId === "hospitality" ? <HospitalityPackageStep config={hospitalityConfig} onChange={(value, selected) => { setHospitalityConfig(value); setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService((selected.price??0)>0); setServiceError(""); }}/> : <ServicePackageStep service={service} planId={planId} onPlanChange={(selected) => { setPlanId(selected.id); setSelectedPlan(selected); setHasSelectedService(true); setServiceError(""); }} professionalConfig={professionalConfig} onProfessionalChange={(value) => { setProfessionalConfig(value); setProfessionalError(""); setHasSelectedService(true); setServiceError(""); }} professionalError={professionalError}/>} {serviceError && <div className="address-error" role="alert">{serviceError}</div>}</div>}
 
         {step === 3 && <div className="wizard-panel"><h2>Thời gian bạn mong muốn</h2><p>Mọi dịch vụ cần được đặt trước ít nhất 2 ngày. Bạn có thể chọn một trong 7 ngày khả dụng bên dưới.</p><div className="date-row">{dates.map((item, index) => <button key={index} className={date === index ? "date-card active" : "date-card"} onClick={() => { setDate(index); setScheduleError(validateSchedule(index, time)); }}><small>{index === 0 ? "Sớm nhất" : item.toLocaleDateString("vi-VN", { weekday: "short" })}</small><strong>{item.getDate()}</strong><span>Tháng {item.getMonth()+1}</span></button>)}</div><h3 className="field-heading"><Clock3/> Chọn giờ bắt đầu theo định dạng 24 giờ</h3><div className={scheduleError ? "custom-time-input invalid" : "custom-time-input"}><Clock3/><div className="time-24-controls"><label><span>GIỜ</span><select value={time.split(":")[0]} onChange={(event) => updateTime(event.target.value, time.split(":")[1])} aria-label="Giờ bắt đầu">{Array.from({length:24},(_,index)=>String(index).padStart(2,"0")).map(hour=><option key={hour} value={hour}>{hour}</option>)}</select></label><b>:</b><label><span>PHÚT</span><select value={time.split(":")[1]} onChange={(event) => updateTime(time.split(":")[0], event.target.value)} aria-label="Phút bắt đầu">{Array.from({length:12},(_,index)=>String(index*5).padStart(2,"0")).map(minute=><option key={minute} value={minute}>{minute}</option>)}</select></label></div><span>Định dạng 24 giờ, ví dụ 14:30 là 2 giờ 30 chiều.</span></div>{scheduleError ? <div className="schedule-error" id="schedule-message" role="alert"><AlertCircle/><span><strong>Thời gian chưa hợp lệ</strong>{scheduleError}</span></div> : <div className="notice" id="schedule-message"><Clock3/><span>Đối tác cần ít nhất <strong>2 ngày chuẩn bị</strong> trước khi bắt đầu.</span></div>}<label className="booking-request"><span>Yêu cầu thêm (không bắt buộc)</span><textarea maxLength={1000} value={customerRequest} onChange={event=>setCustomerRequest(event.target.value)} placeholder="Ví dụ: gọi trước khi đến, ưu tiên khu vực bếp, có thú cưng trong nhà..."/><small>{customerRequest.length}/1000 ký tự</small></label></div>}
 

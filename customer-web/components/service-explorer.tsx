@@ -91,23 +91,14 @@ const businessServiceContent: Record<string, { introduction:string; benefits:Ser
   },
 };
 
-function storageId(service: UtilityService) {
-  return service.bookingService ?? service.slug;
-}
-
 export function ServiceExplorer() {
   const [selected, setSelected] = useState<SelectedService | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [storedGroups, setStoredGroups] = useState<StoredGroup[]>([]);
+  const [activeSlugs,setActiveSlugs]=useState<Set<string>|null>(null);
 
   useEffect(() => {
-    try {
-      setStoredGroups(
-        JSON.parse(localStorage.getItem("everycare_admin_services_v2") ?? "[]") as StoredGroup[],
-      );
-    } catch {
-      setStoredGroups([]);
-    }
+    fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL??"http://localhost:5185"}/api/service-groups`,{cache:"no-store"}).then(response=>response.ok?response.json():Promise.reject()).then((groups:Array<{slug:string;name:string;description:string}>)=>{setStoredGroups(groups.map(group=>({id:group.slug,name:group.name,longDescription:group.description})));setActiveSlugs(new Set(groups.map(group=>group.slug)))}).catch(()=>{setStoredGroups([]);setActiveSlugs(null)});
   }, []);
 
   useEffect(() => {
@@ -219,7 +210,7 @@ export function ServiceExplorer() {
                   </header>
 
                   <div className="ec-service-list">
-                    {category.services.map((service) => {
+                    {category.services.filter(service=>activeSlugs===null||activeSlugs.has(service.slug)).map((service) => {
                       const Icon = icons[service.icon] ?? Sparkles;
 
                       return (
@@ -284,7 +275,7 @@ export function ServiceExplorer() {
                     </div>
                   </div>
                   <div className="ec-service-picker-list">
-                    {category.services.map((service) => {
+                    {category.services.filter(service=>activeSlugs===null||activeSlugs.has(service.slug)).map((service) => {
                       const Icon = icons[service.icon] ?? Sparkles;
 
                       return (
@@ -313,7 +304,7 @@ export function ServiceExplorer() {
       {selected && (
         <ServiceDescriptionModal
           service={selected}
-          stored={storedGroups.find((group) => group.id === storageId(selected))}
+          stored={storedGroups.find((group) => group.id === selected.slug)}
           onClose={() => setSelected(null)}
         />
       )}

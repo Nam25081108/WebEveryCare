@@ -4,6 +4,7 @@ import "./globals.css";
 import "./admin.css";
 import "./admin-orders.css";
 import "./admin-partners.css";
+import "./admin-dashboard-live.css";
 
 export const metadata: Metadata = {
   title: "EveryCare Admin — Hệ thống quản trị",

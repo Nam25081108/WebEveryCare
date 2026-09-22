@@ -9,7 +9,7 @@ public sealed class BookingLifecycleService(AppDbContext db)
     public async Task<bool> CompleteAsync(Guid bookingId, bool confirmedByCustomer, CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var booking = await db.Bookings.Include(x => x.Payment).Include(x => x.AssignedPartner)
+        var booking = await db.Bookings.Include(x => x.Payment).Include(x => x.AssignedPartner).Include(x => x.RecurringContract)
             .SingleOrDefaultAsync(x => x.Id == bookingId, cancellationToken);
         if (booking is null || booking.Status != BookingStatus.AwaitingCustomerConfirmation || booking.IssueReportedAt is not null) return false;
         var now = DateTimeOffset.UtcNow;
@@ -18,11 +18,12 @@ public sealed class BookingLifecycleService(AppDbContext db)
         if (confirmedByCustomer) booking.CustomerConfirmedAt = now;
         if (booking.Payment is not null && booking.Payment.ReleasedAt is null)
         {
+            var paidRemaining = booking.Payment.RemainingAmount;
             booking.Payment.Status = PaymentStatus.Paid;
             booking.Payment.RemainingPaidAt = now;
             booking.Payment.RemainingAmount = 0;
             booking.Payment.PaidAt = now;
-            booking.Payment.PlatformFee = Math.Round(booking.Payment.Amount * .15m);
+            booking.Payment.PlatformFee = booking.SelectionFee + Math.Round((booking.Payment.Amount - booking.SelectionFee) * .15m);
             booking.Payment.TaskerNetAmount = booking.Payment.Amount - booking.Payment.PlatformFee;
             booking.Payment.ReleasedAt = now;
             booking.Payment.BankTransactionReference ??= $"MOCK-{now:yyyyMMddHHmmss}";
@@ -30,6 +31,13 @@ public sealed class BookingLifecycleService(AppDbContext db)
             {
                 booking.AssignedPartner.WalletBalance += booking.Payment.TaskerNetAmount;
                 booking.AssignedPartner.CompletedBookings++;
+            }
+            if (booking.RecurringContract is not null)
+            {
+                booking.RecurringContract.CompletedOccurrences++;
+                booking.RecurringContract.RemainingAmount = Math.Max(0, booking.RecurringContract.RemainingAmount - paidRemaining);
+                if (booking.RecurringContract.CompletedOccurrences >= booking.RecurringContract.TotalOccurrences)
+                    booking.RecurringContract.Status = RecurringContractStatus.Completed;
             }
         }
         await db.SaveChangesAsync(cancellationToken);

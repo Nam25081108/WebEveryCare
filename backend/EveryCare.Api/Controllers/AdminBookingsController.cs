@@ -17,6 +17,7 @@ public sealed class AdminBookingsController(AppDbContext db) : ControllerBase
             Service = x.ServicePackage != null ? x.ServiceGroup.Name + " • " + x.ServicePackage.Name : x.ServiceGroup.Name,
             x.AddressSnapshot, x.ScheduledStartAt, x.Status, Cleaner = x.AssignedPartner != null ? x.AssignedPartner.User.FullName : null,
             x.EstimatedTotal, InvitedPartners = x.Assignments.Count, x.CreatedAt, x.IsRecurring, x.RecurrenceRule,
+            ContractCode = x.RecurringContract != null ? x.RecurringContract.Code : null, x.OccurrenceNumber, TotalOccurrences = x.RecurringContract != null ? x.RecurringContract.TotalOccurrences : (int?)null,
             x.FacilityName, x.ContactName, x.ContactPhone, x.AccommodationType,
             x.CustomerRequest,
             Extras = x.ExtraCharges.Where(extra => extra.Status == EveryCare.Api.Domain.Enums.ExtraChargeStatus.Approved).Select(extra => new { extra.Description, extra.Amount })

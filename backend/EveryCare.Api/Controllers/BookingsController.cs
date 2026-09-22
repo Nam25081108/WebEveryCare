@@ -33,13 +33,7 @@ public sealed class BookingsController(AppDbContext db) : ControllerBase
         string? recurrenceRule = null;
         if (request.IsRecurring)
         {
-            if (group.Slug != "don-dep-van-phong-dinh-ky") return BadRequest(new { message = "Lịch cố định hiện chỉ áp dụng cho dịch vụ văn phòng." });
-            var dayMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["mon"]="MO", ["tue"]="TU", ["wed"]="WE", ["thu"]="TH", ["fri"]="FR", ["sat"]="SA", ["sun"]="SU" };
-            var days = request.RecurrenceDays?.Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? [];
-            if (days.Length == 0 || days.Any(day => !dayMap.ContainsKey(day))) return BadRequest(new { message = "Vui lòng chọn ngày làm việc cố định hợp lệ." });
-            if (!TimeOnly.TryParseExact(request.RecurrenceStartTime, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var recurringTime)) return BadRequest(new { message = "Giờ làm việc cố định không hợp lệ." });
-            if (request.RecurrenceMonths is not (1 or 3 or 6 or 12)) return BadRequest(new { message = "Thời hạn gói tháng không hợp lệ." });
-            recurrenceRule = $"FREQ=WEEKLY;BYDAY={string.Join(',', days.Select(day => dayMap[day]))};TIME={recurringTime.ToString("HH:mm", CultureInfo.InvariantCulture)};MONTHS={request.RecurrenceMonths}";
+            return BadRequest(new { message = "Dịch vụ văn phòng hiện chỉ nhận đặt theo buổi/ngày; gói tháng đã ngừng áp dụng." });
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -127,52 +121,96 @@ public sealed class BookingsController(AppDbContext db) : ControllerBase
             carpetVacuumPrice = request.HasCarpetVacuum ? 100_000m * requiredWorkers : 0;
             if (request.IsRecurring)
             {
-                var visitsPerMonth = request.RecurrenceDays!.Distinct(StringComparer.OrdinalIgnoreCase).Count() * 4;
                 var discount = request.RecurrenceMonths switch { 1 => .08m, 3 => .12m, 6 => .16m, 12 => .20m, _ => 0m };
-                var rawGlassPrice = glassCleaningPrice * visitsPerMonth * (1 - discount);
-                var rawCarpetPrice = carpetVacuumPrice * visitsPerMonth * (1 - discount);
-                basePrice = Math.Round(package.Price * visitsPerMonth * (1 - discount) / 1_000m) * 1_000m;
-                var combinedTotal = Math.Round((package.Price * visitsPerMonth * (1 - discount) + rawGlassPrice + rawCarpetPrice) / 1_000m) * 1_000m;
-                var recurringExtraTotal = combinedTotal - basePrice;
-                if (rawGlassPrice > 0 && rawCarpetPrice > 0)
-                {
-                    glassCleaningPrice = Math.Round(recurringExtraTotal * rawGlassPrice / (rawGlassPrice + rawCarpetPrice) / 1_000m) * 1_000m;
-                    carpetVacuumPrice = recurringExtraTotal - glassCleaningPrice;
-                }
-                else if (rawGlassPrice > 0) glassCleaningPrice = recurringExtraTotal;
-                else if (rawCarpetPrice > 0) carpetVacuumPrice = recurringExtraTotal;
+                basePrice = RoundToThousand(package.Price * (1 - discount));
+                glassCleaningPrice = RoundToThousand(glassCleaningPrice * (1 - discount));
+                carpetVacuumPrice = RoundToThousand(carpetVacuumPrice * (1 - discount));
             }
         }
 
-        var selectionFee = request.CleanerSelectionMode == CleanerSelectionMode.CustomerChooses ? 30_000m : 0m;
-        var extraChargeTotal = glassCleaningPrice + carpetVacuumPrice + hospitalityCharges.Sum(item => item.Amount);
-        var booking = new Booking
+        var selectionMode = request.CleanerSelectionMode;
+        if (selectionMode == CleanerSelectionMode.FavoriteFirst)
         {
-            Code = $"SN-{DateTime.UtcNow:yyMMdd}-{Random.Shared.Next(1000, 9999)}",
-            Customer = customer, Address = address, AddressSnapshot = request.FullAddress, LocationSnapshot = point,
-            ServiceGroup = group, ServicePackage = package, ScheduledStartAt = request.ScheduledStartAt,
-            ScheduledEndAt = request.ScheduledStartAt.AddMinutes(calculatedDurationMinutes),
-            Status = BookingStatus.Draft,
-            CleanerSelectionMode = request.CleanerSelectionMode, RequiredWorkers = requiredWorkers,
-            BuildingType = request.BuildingType, BuildingCondition = request.BuildingCondition, HasFurniture = request.HasFurniture,
-            AreaSquareMeters = request.AreaSquareMeters, BasePrice = basePrice, SelectionFee = selectionFee, ExtraChargeTotal = extraChargeTotal, EstimatedTotal = basePrice + extraChargeTotal + selectionFee,
-            IsRecurring = request.IsRecurring, RecurrenceRule = recurrenceRule,
-            FacilityName = group.Slug == "don-dep-buong-phong" ? request.FacilityName!.Trim() : null,
-            ContactName = group.Slug == "don-dep-buong-phong" ? request.ContactName!.Trim() : null,
-            ContactPhone = group.Slug == "don-dep-buong-phong" ? Regex.Replace(request.ContactPhone!, @"\s+", "") : null,
-            AccommodationType = group.Slug == "don-dep-buong-phong" ? request.AccommodationType : null,
-            CustomerRequest = string.IsNullOrWhiteSpace(request.CustomerRequest) ? null : request.CustomerRequest.Trim()
-        };
-        if (glassCleaningPrice > 0) booking.ExtraCharges.Add(new BookingExtraCharge { Description = request.IsRecurring ? "Lau kính (gói tháng)" : "Lau kính", Amount = glassCleaningPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
-        if (carpetVacuumPrice > 0) booking.ExtraCharges.Add(new BookingExtraCharge { Description = request.IsRecurring ? "Hút bụi thảm văn phòng (gói tháng)" : "Hút bụi thảm văn phòng", Amount = carpetVacuumPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
-        foreach (var charge in hospitalityCharges) booking.ExtraCharges.Add(new BookingExtraCharge { Description = charge.Description, Amount = charge.Amount, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
-        var depositAmount = Math.Round(booking.EstimatedTotal * .30m / 1_000m) * 1_000m;
-        booking.Payment = new Payment { Method = PaymentMethod.BankTransfer, Status = PaymentStatus.Pending, Amount = booking.EstimatedTotal, DepositAmount = depositAmount, RemainingAmount = booking.EstimatedTotal - depositAmount };
-        db.Bookings.Add(booking);
+            var individualService = group.Slug is "ve-sinh-phong-le" or "don-dep-van-phong-dinh-ky" or "don-dep-buong-phong";
+            var hasEligibleFavorite = await db.FavoritePartners.AsNoTracking().AnyAsync(favorite =>
+                favorite.CustomerId == customer.Id &&
+                favorite.PartnerProfile.ServiceCapabilities.Any(capability => capability.ServiceGroupId == group.Id) &&
+                (individualService
+                    ? favorite.PartnerProfile.PartnerType == PartnerType.Individual
+                    : favorite.PartnerProfile.PartnerType == PartnerType.Team && favorite.PartnerProfile.TeamSize >= requiredWorkers), cancellationToken);
+            if (!hasEligibleFavorite) selectionMode = CleanerSelectionMode.Automatic;
+        }
+        var selectionFee = selectionMode == CleanerSelectionMode.CustomerChooses ? 30_000m : 0m;
+        var extraChargeTotal = glassCleaningPrice + carpetVacuumPrice + hospitalityCharges.Sum(item => item.Amount);
+        Booking CreateOccurrence(DateTimeOffset scheduledStart, int? occurrenceNumber, decimal occurrenceSelectionFee, RecurringServiceContract? contract = null)
+        {
+            var item = new Booking
+            {
+                Code = $"SN-{DateTime.UtcNow:yyMMdd}-{Guid.NewGuid():N}"[..19].ToUpperInvariant(),
+                Customer = customer, Address = address, AddressSnapshot = request.FullAddress, LocationSnapshot = point,
+                ServiceGroup = group, ServicePackage = package, ScheduledStartAt = scheduledStart,
+                ScheduledEndAt = scheduledStart.AddMinutes(calculatedDurationMinutes), Status = BookingStatus.Draft,
+                CleanerSelectionMode = selectionMode, RequiredWorkers = requiredWorkers,
+                BuildingType = request.BuildingType, BuildingCondition = request.BuildingCondition, HasFurniture = request.HasFurniture,
+                AreaSquareMeters = request.AreaSquareMeters, BasePrice = basePrice, SelectionFee = occurrenceSelectionFee,
+                ExtraChargeTotal = extraChargeTotal, EstimatedTotal = basePrice + extraChargeTotal + occurrenceSelectionFee,
+                IsRecurring = request.IsRecurring, RecurrenceRule = recurrenceRule, RecurringContract = contract, OccurrenceNumber = occurrenceNumber,
+                FacilityName = group.Slug == "don-dep-buong-phong" ? request.FacilityName!.Trim() : null,
+                ContactName = group.Slug == "don-dep-buong-phong" ? request.ContactName!.Trim() : null,
+                ContactPhone = group.Slug == "don-dep-buong-phong" ? Regex.Replace(request.ContactPhone!, @"\s+", "") : null,
+                AccommodationType = group.Slug == "don-dep-buong-phong" ? request.AccommodationType : null,
+                CustomerRequest = string.IsNullOrWhiteSpace(request.CustomerRequest) ? null : request.CustomerRequest.Trim()
+            };
+            if (glassCleaningPrice > 0) item.ExtraCharges.Add(new BookingExtraCharge { Description = "Lau kính", Amount = glassCleaningPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
+            if (carpetVacuumPrice > 0) item.ExtraCharges.Add(new BookingExtraCharge { Description = "Hút bụi thảm văn phòng", Amount = carpetVacuumPrice, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
+            foreach (var charge in hospitalityCharges) item.ExtraCharges.Add(new BookingExtraCharge { Description = charge.Description, Amount = charge.Amount, Status = ExtraChargeStatus.Approved, CustomerRespondedAt = DateTimeOffset.UtcNow });
+            var itemDeposit = RoundToThousand(item.EstimatedTotal * .30m);
+            item.Payment = new Payment { Method = PaymentMethod.BankTransfer, Status = PaymentStatus.Pending, Amount = item.EstimatedTotal, DepositAmount = itemDeposit, RemainingAmount = item.EstimatedTotal - itemDeposit };
+            return item;
+        }
+
+        Booking booking;
+        decimal depositAmount;
+        decimal responseTotal;
+        decimal responseRemaining;
+        string? contractCode = null;
+        int occurrenceCount = 1;
+        if (request.IsRecurring)
+        {
+            var starts = BuildRecurringStarts(request.ScheduledStartAt, request.RecurrenceDays!, request.RecurrenceStartTime!, request.RecurrenceMonths!.Value);
+            if (starts.Count == 0) return BadRequest(new { message = "Không tạo được lượt làm việc nào trong thời hạn hợp đồng." });
+            var contract = new RecurringServiceContract
+            {
+                Code = $"HD-{DateTime.UtcNow:yyMMdd}-{Guid.NewGuid():N}"[..19].ToUpperInvariant(), Customer = customer,
+                ServiceGroup = group, ServicePackage = package!, Status = RecurringContractStatus.PendingDeposit,
+                RecurrenceRule = recurrenceRule!, StartsAt = starts[0], EndsAt = starts[^1].AddMinutes(calculatedDurationMinutes),
+                ContractMonths = request.RecurrenceMonths.Value, TotalOccurrences = starts.Count
+            };
+            for (var index = 0; index < starts.Count; index++)
+                contract.Occurrences.Add(CreateOccurrence(starts[index], index + 1, index == 0 ? selectionFee : 0, contract));
+            contract.EstimatedTotal = contract.Occurrences.Sum(x => x.EstimatedTotal);
+            contract.DepositAmount = contract.Occurrences.Sum(x => x.Payment!.DepositAmount);
+            contract.RemainingAmount = contract.EstimatedTotal - contract.DepositAmount;
+            db.RecurringServiceContracts.Add(contract);
+            booking = contract.Occurrences.First();
+            depositAmount = contract.DepositAmount;
+            responseTotal = contract.EstimatedTotal;
+            responseRemaining = contract.RemainingAmount;
+            contractCode = contract.Code;
+            occurrenceCount = contract.TotalOccurrences;
+        }
+        else
+        {
+            booking = CreateOccurrence(request.ScheduledStartAt, null, selectionFee);
+            db.Bookings.Add(booking);
+            depositAmount = booking.Payment!.DepositAmount;
+            responseTotal = booking.EstimatedTotal;
+            responseRemaining = booking.Payment.RemainingAmount;
+        }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return CreatedAtAction(nameof(GetByCode), new { code = booking.Code }, new { booking.Id, booking.Code, booking.Status, booking.EstimatedTotal, DepositAmount = depositAmount, RemainingAmount = booking.EstimatedTotal - depositAmount, InvitedPartners = 0, message = "Đơn đã được tạo. Vui lòng thanh toán cọc để bắt đầu tìm Tasker." });
+        return CreatedAtAction(nameof(GetByCode), new { code = booking.Code }, new { booking.Id, booking.Code, ContractCode = contractCode, booking.Status, EstimatedTotal = responseTotal, DepositAmount = depositAmount, RemainingAmount = responseRemaining, OccurrenceCount = occurrenceCount, InvitedPartners = 0, message = request.IsRecurring ? $"Hợp đồng đã tạo {occurrenceCount} lượt làm việc. Vui lòng thanh toán cọc để bắt đầu tìm Tasker cố định." : "Đơn đã được tạo. Vui lòng thanh toán cọc để bắt đầu tìm Tasker." });
     }
 
     [HttpGet("{code}")]
@@ -190,5 +228,29 @@ public sealed class BookingsController(AppDbContext db) : ControllerBase
         <= 500 => AreaTier.Custom101To500,
         _ => throw new ArgumentOutOfRangeException(nameof(area), "Diện tích phải từ 1 đến 500m².")
     };
+
+    private static decimal RoundToThousand(decimal value) => Math.Round(value / 1_000m) * 1_000m;
+
+    private static List<DateTimeOffset> BuildRecurringStarts(DateTimeOffset firstStart, IReadOnlyList<string> requestedDays, string timeText, int months)
+    {
+        var dayMap = new Dictionary<string, DayOfWeek>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["mon"] = DayOfWeek.Monday, ["tue"] = DayOfWeek.Tuesday, ["wed"] = DayOfWeek.Wednesday,
+            ["thu"] = DayOfWeek.Thursday, ["fri"] = DayOfWeek.Friday, ["sat"] = DayOfWeek.Saturday, ["sun"] = DayOfWeek.Sunday
+        };
+        var selectedDays = requestedDays.Select(day => dayMap[day]).ToHashSet();
+        var time = TimeOnly.ParseExact(timeText, "HH:mm", CultureInfo.InvariantCulture);
+        var vietnamOffset = TimeSpan.FromHours(7);
+        var firstLocal = firstStart.ToOffset(vietnamOffset);
+        var firstDate = DateOnly.FromDateTime(firstLocal.DateTime);
+        var endDate = firstDate.AddMonths(months);
+        var result = new List<DateTimeOffset>();
+        for (var date = firstDate; date < endDate; date = date.AddDays(1))
+        {
+            if (!selectedDays.Contains(date.DayOfWeek)) continue;
+            result.Add(new DateTimeOffset(date.Year, date.Month, date.Day, time.Hour, time.Minute, 0, vietnamOffset).ToUniversalTime());
+        }
+        return result;
+    }
 
 }

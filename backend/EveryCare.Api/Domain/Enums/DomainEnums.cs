@@ -9,6 +9,7 @@ public enum BuildingType { House, Office }
 public enum BuildingCondition { Existing, NewOrRenovated }
 public enum AreaTier { Under60, From60To80, From81To100, Custom101To500 }
 public enum BookingStatus { Draft, Searching, AwaitingCustomerSelection, Assigned, PartnerTravelling, InProgress, AwaitingCustomerConfirmation, IssueReported, Completed, Cancelled, NoPartnerFound }
+public enum RecurringContractStatus { PendingDeposit, Searching, Active, Completed, Cancelled }
 public enum AssignmentStatus { Invited, Accepted, Rejected, Expired, Selected, Released }
 public enum CleanerSelectionMode { Automatic, CustomerChooses, FavoriteFirst }
 public enum PaymentMethod { Cash, BankTransfer }

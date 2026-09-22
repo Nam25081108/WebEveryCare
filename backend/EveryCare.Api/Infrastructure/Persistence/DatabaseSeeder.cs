@@ -53,12 +53,6 @@ public static class DatabaseSeeder
             };
             db.ServiceGroups.Add(office);
         }
-        office.Name = "Dọn dẹp văn phòng định kỳ";
-        office.Description = "Nhân sự theo buổi, theo ngày hoặc lịch cố định hằng tháng.";
-        office.CategorySlug = "business";
-        office.IconName = "briefcase";
-        office.IsActive = true;
-        office.IsComingSoon = false;
 
         var officePackages = new (string Name, string Slug, decimal Price, int Minutes, int Workers, decimal Area)[]
         {
@@ -83,14 +77,6 @@ public static class DatabaseSeeder
                 db.ServicePackages.Add(package);
                 continue;
             }
-            package.Name = definition.Name;
-            package.Description = $"Tối đa {definition.Area:0}m²";
-            package.Price = definition.Price;
-            package.DurationMinutes = definition.Minutes;
-            package.RequiredWorkers = definition.Workers;
-            package.MaximumAreaSquareMeters = definition.Area;
-            package.DisplayOrder = index + 1;
-            package.IsActive = true;
         }
 
         var hospitality = await db.ServiceGroups.IgnoreQueryFilters()
@@ -105,12 +91,6 @@ public static class DatabaseSeeder
             };
             db.ServiceGroups.Add(hospitality);
         }
-        hospitality.Name = "Dọn dẹp buồng phòng";
-        hospitality.Description = "Dọn phòng cho khách sạn, homestay, căn hộ dịch vụ và villa.";
-        hospitality.CategorySlug = "business";
-        hospitality.IconName = "bed";
-        hospitality.IsActive = true;
-        hospitality.IsComingSoon = false;
 
         var existingSlugs = (await db.ServiceGroups.IgnoreQueryFilters().Select(group => group.Slug).ToListAsync(cancellationToken)).ToHashSet();
         existingSlugs.Add("don-dep-van-phong-dinh-ky");

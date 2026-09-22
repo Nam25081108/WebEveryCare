@@ -82,7 +82,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var profileId = await db.PartnerProfiles.Where(x => x.UserId == user.Id).Select(x => x.Id).SingleAsync(cancellationToken);
         var rules = await db.PartnerAvailabilityRules.AsNoTracking().Where(x => x.PartnerProfileId == profileId).OrderBy(x => x.DayOfWeek).Select(x => new { x.Id, x.DayOfWeek, x.StartTime, x.EndTime, x.IsActive }).ToListAsync(cancellationToken);
         var overrides = await db.PartnerAvailabilityOverrides.AsNoTracking().Where(x => x.PartnerProfileId == profileId && x.Date >= DateOnly.FromDateTime(DateTime.Today)).OrderBy(x => x.Date).Select(x => new { x.Id, x.Date, x.IsUnavailable, x.StartTime, x.EndTime, x.Note }).ToListAsync(cancellationToken);
-        var bookings = await db.Bookings.AsNoTracking().Where(x => x.AssignedPartnerId == profileId && x.Status != BookingStatus.Cancelled && x.Status != BookingStatus.Completed).OrderBy(x => x.ScheduledStartAt).Select(x => new { x.Id, x.Code, x.AddressSnapshot, x.ScheduledStartAt, x.ScheduledEndAt, x.Status, x.IsRecurring, x.RecurrenceRule, x.CustomerRequest, x.TaskerConfirmedAt, x.ArrivedAt, x.StartedAt, x.CompletionReportedAt }).ToListAsync(cancellationToken);
+        var bookings = await db.Bookings.AsNoTracking().Where(x => x.AssignedPartnerId == profileId && x.Status != BookingStatus.Cancelled && x.Status != BookingStatus.Completed).OrderBy(x => x.ScheduledStartAt).Select(x => new { x.Id, x.Code, x.AddressSnapshot, x.ScheduledStartAt, x.ScheduledEndAt, x.Status, x.IsRecurring, x.RecurrenceRule, ContractCode = x.RecurringContract != null ? x.RecurringContract.Code : null, x.OccurrenceNumber, TotalOccurrences = x.RecurringContract != null ? x.RecurringContract.TotalOccurrences : (int?)null, x.CustomerRequest, x.TaskerConfirmedAt, x.ArrivedAt, x.StartedAt, x.CompletionReportedAt }).ToListAsync(cancellationToken);
         return Ok(new { rules, overrides, bookings });
     }
 
@@ -129,7 +129,7 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
     {
         var user = await RequirePartnerAsync(cancellationToken);
         if (user is null) return Unauthorized();
-        var assignment = await db.BookingAssignments.AsNoTracking().Include(x => x.Booking).Include(x => x.PartnerProfile).SingleOrDefaultAsync(x => x.Id == assignmentId && x.PartnerProfile.UserId == user.Id, cancellationToken);
+        var assignment = await db.BookingAssignments.AsNoTracking().Include(x => x.Booking).ThenInclude(x => x.RecurringContract).Include(x => x.PartnerProfile).SingleOrDefaultAsync(x => x.Id == assignmentId && x.PartnerProfile.UserId == user.Id, cancellationToken);
         if (assignment is null) return NotFound(new { message = "Không tìm thấy lời mời." });
         if (assignment.Status != AssignmentStatus.Invited) return BadRequest(new { message = "Lời mời này đã được phản hồi." });
         if (assignment.ExpiresAt <= DateTimeOffset.UtcNow) { await db.BookingAssignments.Where(x => x.Id == assignmentId).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Expired).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken); return BadRequest(new { message = "Lời mời đã hết hạn." }); }
@@ -139,8 +139,16 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
             await dispatch.DispatchAsync(assignment.BookingId, cancellationToken);
             return Ok(new { message = "Đã từ chối lời mời." });
         }
-        var end = assignment.Booking.ScheduledEndAt ?? assignment.Booking.ScheduledStartAt.AddHours(4);
-        if (!await availability.IsAvailableAsync(assignment.PartnerProfileId, assignment.Booking.ScheduledStartAt, end, assignment.BookingId, cancellationToken)) return Conflict(new { message = "Lịch này không còn trống hoặc không nằm trong giờ làm việc bạn đã đăng ký." });
+        var assignWholeSeries = assignment.Booking.RecurringContract is { Status: RecurringContractStatus.Searching } && assignment.Booking.OccurrenceNumber == 1;
+        var occurrences = assignWholeSeries && assignment.Booking.RecurringContractId is Guid contractId
+            ? await db.Bookings.AsNoTracking().Where(x => x.RecurringContractId == contractId && x.Status != BookingStatus.Cancelled).OrderBy(x => x.OccurrenceNumber).ToListAsync(cancellationToken)
+            : [assignment.Booking];
+        foreach (var occurrence in occurrences)
+        {
+            var end = occurrence.ScheduledEndAt ?? occurrence.ScheduledStartAt.AddHours(4);
+            if (!await availability.IsAvailableAsync(assignment.PartnerProfileId, occurrence.ScheduledStartAt, end, occurrence.Id, cancellationToken))
+                return Conflict(new { message = assignment.Booking.RecurringContractId is null ? "Lịch này không còn trống hoặc không nằm trong giờ làm việc bạn đã đăng ký." : "Bạn chưa còn trống toàn bộ các lượt làm việc của hợp đồng định kỳ này." });
+        }
         if (assignment.Booking.CleanerSelectionMode == CleanerSelectionMode.CustomerChooses)
         {
             await db.BookingAssignments.Where(x => x.Id == assignmentId && x.Status == AssignmentStatus.Invited).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Accepted).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken);
@@ -148,20 +156,39 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var claimed = await db.Bookings.Where(x => x.Id == assignment.BookingId && x.AssignedPartnerId == null &&
+        var occurrenceIds = occurrences.Select(x => x.Id).ToArray();
+        var claimed = await db.Bookings.Where(x => occurrenceIds.Contains(x.Id) && x.AssignedPartnerId == null &&
             (x.Status == BookingStatus.Searching || x.Status == BookingStatus.NoPartnerFound))
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.AssignedPartnerId, assignment.PartnerProfileId).SetProperty(x => x.Status, BookingStatus.Assigned), cancellationToken);
-        if (claimed == 0)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.AssignedPartnerId, assignment.PartnerProfileId).SetProperty(x => x.Status, BookingStatus.Assigned).SetProperty(x => x.TaskerConfirmedAt, (DateTimeOffset?)null), cancellationToken);
+        if (claimed != occurrences.Count)
         {
             await transaction.RollbackAsync(cancellationToken);
             return Conflict(new { message = "Đơn này vừa được một đối tác khác nhận." });
         }
+        var selectedAt = DateTimeOffset.UtcNow;
         await db.BookingAssignments.Where(x => x.Id == assignmentId && x.Status == AssignmentStatus.Invited)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Selected).SetProperty(x => x.RespondedAt, DateTimeOffset.UtcNow), cancellationToken);
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Selected).SetProperty(x => x.RespondedAt, selectedAt), cancellationToken);
+        if (assignWholeSeries)
+        {
+            foreach (var occurrence in occurrences.Skip(1))
+                db.BookingAssignments.Add(new BookingAssignment
+                {
+                    BookingId = occurrence.Id,
+                    PartnerProfileId = assignment.PartnerProfileId,
+                    Status = AssignmentStatus.Selected,
+                    InvitedAt = assignment.InvitedAt,
+                    ExpiresAt = assignment.ExpiresAt,
+                    RespondedAt = selectedAt,
+                    DistanceMetersAtInvitation = assignment.DistanceMetersAtInvitation
+                });
+        }
         await db.BookingAssignments.Where(x => x.BookingId == assignment.BookingId && x.Id != assignmentId && x.Status == AssignmentStatus.Invited)
             .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, AssignmentStatus.Released), cancellationToken);
+        if (assignWholeSeries && assignment.Booking.RecurringContractId is Guid recurringId)
+            await db.RecurringServiceContracts.Where(x => x.Id == recurringId).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, RecurringContractStatus.Active), cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Ok(new { message = "Bạn đã nhận đơn và khung giờ đã được khóa.", Status = AssignmentStatus.Selected });
+        return Ok(new { message = occurrences.Count > 1 ? $"Bạn đã nhận hợp đồng gồm {occurrences.Count} lượt làm việc và toàn bộ khung giờ đã được khóa." : "Bạn đã nhận đơn và khung giờ đã được khóa.", Status = AssignmentStatus.Selected });
     }
 
     [HttpPost("me/bookings/{bookingId:guid}/cancel")]
@@ -177,6 +204,10 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         foreach (var selected in booking.Assignments.Where(x => x.PartnerProfileId == profileId && x.Status == AssignmentStatus.Selected)) selected.Status = AssignmentStatus.Released;
         booking.AssignedPartnerId = null;
         booking.Status = BookingStatus.Searching;
+        booking.TaskerConfirmedAt = null;
+        booking.ArrivedAt = null;
+        booking.StartedAt = null;
+        booking.CompletionReportedAt = null;
         booking.CancellationReason = string.IsNullOrWhiteSpace(request.Reason) ? "Đối tác hủy nhận việc." : $"Đối tác hủy: {request.Reason.Trim()}";
         await db.SaveChangesAsync(cancellationToken);
         var invited = await dispatch.DispatchAsync(booking.Id, cancellationToken);
@@ -200,6 +231,8 @@ public sealed class PartnerPortalController(AppDbContext db, PartnerSessionServi
         var booking = await AssignedBooking(bookingId, cancellationToken);
         if (booking is null) return NotFound(new { message = "Không tìm thấy đơn đã nhận." });
         if (booking.Status != BookingStatus.Assigned || booking.TaskerConfirmedAt is null) return BadRequest(new { message = "Tasker cần xác nhận lịch trước khi check-in." });
+        if (DateTimeOffset.UtcNow < booking.ScheduledStartAt.AddHours(-2)) return BadRequest(new { message = "Chỉ có thể check-in trong vòng 2 giờ trước thời gian hẹn." });
+        if (DateTimeOffset.UtcNow > (booking.ScheduledEndAt ?? booking.ScheduledStartAt.AddHours(4))) return BadRequest(new { message = "Lượt làm việc này đã quá thời gian thực hiện." });
         booking.Status = BookingStatus.PartnerTravelling;
         booking.ArrivedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);

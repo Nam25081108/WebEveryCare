@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight, Clock3, HelpCircle, Info, ListChecks, Sparkles, Users, X } from "lucide-react";
+import { Check, CheckCircle2, ChevronRight, HelpCircle, Info, ListChecks, Sparkles, Users, X } from "lucide-react";
 import { formatCurrency, type ServicePlan } from "@/lib/mock-data";
 
 export type OfficeMode = "session" | "monthly";
@@ -17,9 +17,9 @@ export type OfficeBookingConfig = {
   contractMonths: number;
 };
 
-type OfficePlan = { id:string;tier:OfficeTier;area:number;people:number;hours:number;price:number };
+export type OfficePlan = { id:string;tier:OfficeTier;area:number;people:number;hours:number;price:number };
 
-export const defaultOfficeConfig: OfficeBookingConfig = { mode:"",tier:"under200",planId:"o100",glass:false,carpet:false,days:["mon"],startTime:"08:00",contractMonths:1 };
+export const defaultOfficeConfig: OfficeBookingConfig = { mode:"session",tier:"under200",planId:"o100",glass:false,carpet:false,days:[],startTime:"08:00",contractMonths:1 };
 
 const officePlans: OfficePlan[] = [
   {id:"o100",tier:"under200",area:100,people:1,hours:2,price:260000},
@@ -34,7 +34,6 @@ const officePlans: OfficePlan[] = [
 ];
 
 const tiers: {id:OfficeTier;label:string}[] = [{id:"under200",label:"< 200m²"},{id:"under400",label:"< 400m²"},{id:"under900",label:"< 900m²"}];
-const weekdays = [["mon","Thứ 2"],["tue","Thứ 3"],["wed","Thứ 4"],["thu","Thứ 5"],["fri","Thứ 6"],["sat","Thứ 7"],["sun","Chủ nhật"]] as const;
 const discounts:Record<number,number>={1:.08,3:.12,6:.16,12:.2};
 const glassPricePerPerson=120000;
 
@@ -47,40 +46,37 @@ const workAreas=[
   ["Khu vực sảnh và nhà ăn (nếu có)","Quét bụi và lau sàn nhà. Phủi bụi, lau bàn ghế, tủ, kệ. Thu gom và đổ rác."],
 ] as const;
 
-export function calculateOfficePlan(config:OfficeBookingConfig):ServicePlan {
-  const selected=officePlans.find(item=>item.id===config.planId)??officePlans[0];
+export function calculateOfficePlan(config:OfficeBookingConfig,plans:OfficePlan[]=officePlans):ServicePlan {
+  const selected=plans.find(item=>item.id===config.planId)??plans[0]??officePlans[0];
   const extras=(config.glass?glassPricePerPerson*selected.people:0)+(config.carpet?100000*selected.people:0);
   const perVisit=selected.price+extras;
-  const visits=config.mode==="monthly"?Math.max(config.days.length,1)*4:1;
+  const dayNumbers:Record<string,number>={sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6};
+  let visits=1;
+  if(config.mode==="monthly"&&config.days.length){const earliest=new Date(Date.now()+2*24*60*60*1000);const firstCandidates=config.days.map(day=>{const value=new Date(earliest);value.setDate(value.getDate()+((dayNumbers[day]-value.getDay()+7)%7));value.setHours(Number(config.startTime.split(":")[0]),Number(config.startTime.split(":")[1]),0,0);if(value.getTime()<earliest.getTime())value.setDate(value.getDate()+7);return value}).sort((a,b)=>a.getTime()-b.getTime());const first=firstCandidates[0];const end=new Date(first);end.setMonth(end.getMonth()+config.contractMonths);visits=0;for(const cursor=new Date(first);cursor<end;cursor.setDate(cursor.getDate()+1))if(config.days.some(day=>dayNumbers[day]===cursor.getDay()))visits++}
   const discount=config.mode==="monthly"?discounts[config.contractMonths]:0;
-  const monthly=Math.round(perVisit*visits*(1-discount)/1000)*1000;
-  return {id:selected.id,name:`${config.mode==="monthly"?"Gói tháng":"Theo buổi"} · Tối đa ${selected.area}m²`,description:`${selected.people} người`,meta:config.mode==="monthly"?`${visits} buổi/tháng · ${config.contractMonths} tháng`:`${selected.people} người • ${selected.hours+(config.glass?1:0)} giờ`,price:config.mode==="monthly"?monthly:perVisit};
+  const discountedVisit=Math.round(selected.price*(1-discount)/1000)*1000+(config.glass?Math.round(glassPricePerPerson*selected.people*(1-discount)/1000)*1000:0)+(config.carpet?Math.round(100000*selected.people*(1-discount)/1000)*1000:0);
+  const contractTotal=discountedVisit*visits;
+  return {id:selected.id,name:`${config.mode==="monthly"?"Gói định kỳ":"Theo buổi"} · Tối đa ${selected.area}m²`,description:`${selected.people} người`,meta:config.mode==="monthly"?`${visits} lượt · ${config.contractMonths} tháng`:`${selected.people} người • ${selected.hours+(config.glass?1:0)} giờ`,price:config.mode==="monthly"?contractTotal:perVisit};
 }
 
-export function OfficePackageStep({config,onChange}:{config:OfficeBookingConfig;onChange:(config:OfficeBookingConfig,plan:ServicePlan)=>void}) {
+export function OfficePackageStep({config,onChange,plans=officePlans}:{config:OfficeBookingConfig;onChange:(config:OfficeBookingConfig,plan:ServicePlan)=>void;plans?:OfficePlan[]}) {
   const [glassHelp,setGlassHelp]=useState(false);
   const [workDetails,setWorkDetails]=useState(false);
-  const plan=officePlans.find(item=>item.id===config.planId)??officePlans[0];
-  const calculated=useMemo(()=>calculateOfficePlan(config),[config]);
-  const update=(patch:Partial<OfficeBookingConfig>)=>{const next={...config,...patch};onChange(next,calculateOfficePlan(next))};
-  const chooseTier=(tier:OfficeTier)=>{const first=officePlans.find(item=>item.tier===tier)!;update({tier,planId:first.id})};
-  const toggleDay=(day:string)=>update({days:config.days.includes(day)?config.days.filter(item=>item!==day):[...config.days,day]});
-
-  if(!config.mode)return <div className="wizard-panel office-booking-step"><h2>Chọn hình thức vệ sinh văn phòng</h2><p>Lựa chọn phương án phù hợp với tần suất vận hành của doanh nghiệp.</p><div className="office-mode-grid embedded"><button type="button" onClick={()=>update({mode:"session"})}><i><Clock3/></i><small>Linh hoạt theo nhu cầu</small><h3>Theo buổi / ngày</h3><p>Đăng việc nhanh chóng chỉ trong khoảng 60 giây, thuận tiện khi cần buổi nào đặt buổi đó.</p><strong>Chọn phương án <ChevronRight/></strong></button><button type="button" onClick={()=>update({mode:"monthly"})}><i><CalendarDays/></i><small>Lịch làm việc cố định</small><h3>Theo gói tháng</h3><p>Ưu tiên Tasker cố định, tiết kiệm thời gian đăng việc và tránh phải thanh toán nhiều lần.</p><strong>Chọn phương án <ChevronRight/></strong></button></div></div>;
+  const plan=plans.find(item=>item.id===config.planId)??plans[0]??officePlans[0];
+  const calculated=useMemo(()=>calculateOfficePlan(config,plans),[config,plans]);
+  const update=(patch:Partial<OfficeBookingConfig>)=>{const next={...config,...patch};onChange(next,calculateOfficePlan(next,plans))};
+  const chooseTier=(tier:OfficeTier)=>{const first=plans.find(item=>item.tier===tier);if(first)update({tier,planId:first.id})};
 
   return <div className="wizard-panel office-booking-step">
-    <button className="office-inline-back" type="button" onClick={()=>update({mode:""})}><ArrowLeft/> Chọn lại hình thức</button>
-    <h2>{config.mode==="session"?"Dịch vụ theo buổi / ngày":"Dịch vụ theo gói tháng"}</h2>
-    <p>{config.mode==="session"?"Linh hoạt chọn buổi cần làm và đặt lịch nhanh chóng.":"Thiết lập lịch làm việc cố định theo nhu cầu của quý khách."}</p>
+    <h2>Dịch vụ theo buổi / ngày</h2>
+    <p>Linh hoạt chọn buổi cần làm và đặt lịch nhanh chóng.</p>
 
-    {config.mode==="monthly"&&<section className="office-config-section"><div className="office-section-title"><span>01</span><div><h3>Lịch làm việc theo tuần</h3><p>Chọn ngày cố định và giờ bắt đầu theo định dạng 24 giờ.</p></div></div><div className="office-weekdays">{weekdays.map(([value,label])=><button type="button" className={config.days.includes(value)?"active":""} onClick={()=>toggleDay(value)} key={value}>{config.days.includes(value)&&<Check/>}{label}</button>)}</div><div className="office-time-field office-time-24"><Clock3/><label><small>GIỜ</small><select value={config.startTime.split(":")[0]} onChange={event=>update({startTime:`${event.target.value}:${config.startTime.split(":")[1]}`})}>{Array.from({length:24},(_,index)=>String(index).padStart(2,"0")).map(hour=><option key={hour} value={hour}>{hour}</option>)}</select></label><b>:</b><label><small>PHÚT</small><select value={config.startTime.split(":")[1]} onChange={event=>update({startTime:`${config.startTime.split(":")[0]}:${event.target.value}`})}>{Array.from({length:60},(_,index)=>String(index).padStart(2,"0")).map(minute=><option key={minute} value={minute}>{minute}</option>)}</select></label><span>00:00–23:59</span></div><div className="office-contracts">{[1,3,6,12].map(months=><button type="button" className={config.contractMonths===months?"active":""} onClick={()=>update({contractMonths:months})} key={months}><strong>{months} tháng</strong><small>Giảm {discounts[months]*100}%</small></button>)}</div></section>}
-
-    <section className="office-config-section"><div className="office-section-title"><span>{config.mode==="monthly"?"02":"01"}</span><div><h3>Chọn thời lượng</h3><p>Ước tính diện tích cần dọn dẹp và chọn phương án phù hợp.</p></div></div><div className="office-tier-tabs">{tiers.map(tier=><button type="button" className={config.tier===tier.id?"active":""} onClick={()=>chooseTier(tier.id)} key={tier.id}>{tier.label}</button>)}</div><div className="office-plan-list">{officePlans.filter(item=>item.tier===config.tier).map(item=><button type="button" className={config.planId===item.id?"active":""} onClick={()=>update({planId:item.id})} key={item.id}>{config.planId===item.id&&<CheckCircle2/>}<span><strong>Tối đa {item.area}m²</strong><small>{item.people} người / {item.hours} giờ</small></span><b>{formatCurrency(item.price)}</b></button>)}</div></section>
+    <section className="office-config-section"><div className="office-section-title"><span>{config.mode==="monthly"?"02":"01"}</span><div><h3>Chọn thời lượng</h3><p>Ước tính diện tích cần dọn dẹp và chọn phương án phù hợp.</p></div></div><div className="office-tier-tabs">{tiers.map(tier=><button type="button" className={config.tier===tier.id?"active":""} onClick={()=>chooseTier(tier.id)} key={tier.id}>{tier.label}</button>)}</div><div className="office-plan-list">{plans.filter(item=>item.tier===config.tier).map(item=><button type="button" className={config.planId===item.id?"active":""} onClick={()=>update({planId:item.id})} key={item.id}>{config.planId===item.id&&<CheckCircle2/>}<span><strong>Tối đa {item.area}m²</strong><small>{item.people} người / {item.hours} giờ</small></span><b>{formatCurrency(item.price)}</b></button>)}</div></section>
 
     <section className="office-config-section"><div className="office-section-title"><span>{config.mode==="monthly"?"03":"02"}</span><div><h3>Dịch vụ thêm</h3><p>Bạn có thể chọn thêm cho mỗi lần làm việc.</p></div></div><div className="office-extras"><label className={config.glass?"active":""}><input type="checkbox" checked={config.glass} onChange={event=>update({glass:event.target.checked})}/><i><Sparkles/></i><span><strong>Lau kính</strong><small>+1 giờ/người · +{formatCurrency(glassPricePerPerson)}/người</small></span><button type="button" onClick={event=>{event.preventDefault();setGlassHelp(true)}}><HelpCircle/></button></label><label className={config.carpet?"active":""}><input type="checkbox" checked={config.carpet} onChange={event=>update({carpet:event.target.checked})}/><i><Sparkles/></i><span><strong>Hút bụi thảm văn phòng</strong><small>+100.000đ/người</small></span></label></div></section>
 
     <button className="office-work-button" type="button" onClick={()=>setWorkDetails(true)}><ListChecks/><span><strong>Chi tiết công việc</strong><small>Xem nội dung tại từng khu vực</small></span><ChevronRight/></button>
-    <div className="office-inline-total"><span>{config.mode==="monthly"?"Tạm tính mỗi tháng":"Tạm tính"}</span><strong>{formatCurrency(calculated.price)}</strong><small>{plan.people} người · {plan.hours+(config.glass?1:0)} giờ mỗi buổi{config.glass?" · đã gồm phí lau kính":""}</small></div>
+    <div className="office-inline-total"><span>{config.mode==="monthly"?`Tạm tính toàn bộ ${config.contractMonths} tháng`:"Tạm tính"}</span><strong>{formatCurrency(calculated.price)}</strong><small>{plan.people} người · {plan.hours+(config.glass?1:0)} giờ mỗi buổi{config.glass?" · đã gồm phí lau kính":""}</small></div>
 
     {glassHelp&&<div className="office-nested-backdrop"><div className="office-help-dialog"><Info/><h3>Dịch vụ lau kính</h3><p>Áp dụng cho văn phòng có tổng diện tích cửa kính, cửa sổ tối thiểu 100m².</p><p>Không hỗ trợ lau kính bên ngoài tòa nhà.</p><button type="button" onClick={()=>setGlassHelp(false)}>Đã hiểu</button></div></div>}
     {workDetails&&<div className="office-nested-backdrop details" onMouseDown={event=>{if(event.currentTarget===event.target)setWorkDetails(false)}}><div className="office-work-dialog"><header><div><span>PHẠM VI CÔNG VIỆC</span><h3>Chi tiết vệ sinh văn phòng</h3></div><button type="button" onClick={()=>setWorkDetails(false)}><X/></button></header><section><h4>Tổng quát</h4><ul>{overview.map(item=><li key={item}><Check/>{item}</li>)}</ul></section><div className="office-work-table">{workAreas.map(([title,copy])=><div key={title}><strong>{title}</strong><p>{copy}</p></div>)}</div><button className="office-understood" type="button" onClick={()=>setWorkDetails(false)}>Đã hiểu</button></div></div>}

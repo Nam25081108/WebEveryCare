@@ -45,6 +45,9 @@ public sealed class Booking : BaseEntity
     public string? CancellationReason { get; set; }
     public bool IsRecurring { get; set; }
     public string? RecurrenceRule { get; set; }
+    public Guid? RecurringContractId { get; set; }
+    public RecurringServiceContract? RecurringContract { get; set; }
+    public int? OccurrenceNumber { get; set; }
     public string? FacilityName { get; set; }
     public string? ContactName { get; set; }
     public string? ContactPhone { get; set; }
@@ -55,6 +58,28 @@ public sealed class Booking : BaseEntity
     public ICollection<BookingPhoto> Photos { get; set; } = [];
     public Payment? Payment { get; set; }
     public Review? Review { get; set; }
+}
+
+public sealed class RecurringServiceContract : BaseEntity
+{
+    public required string Code { get; set; }
+    public Guid CustomerId { get; set; }
+    public AppUser Customer { get; set; } = null!;
+    public Guid ServiceGroupId { get; set; }
+    public ServiceGroup ServiceGroup { get; set; } = null!;
+    public Guid ServicePackageId { get; set; }
+    public ServicePackage ServicePackage { get; set; } = null!;
+    public RecurringContractStatus Status { get; set; } = RecurringContractStatus.PendingDeposit;
+    public required string RecurrenceRule { get; set; }
+    public DateTimeOffset StartsAt { get; set; }
+    public DateTimeOffset EndsAt { get; set; }
+    public int ContractMonths { get; set; }
+    public int TotalOccurrences { get; set; }
+    public int CompletedOccurrences { get; set; }
+    public decimal EstimatedTotal { get; set; }
+    public decimal DepositAmount { get; set; }
+    public decimal RemainingAmount { get; set; }
+    public ICollection<Booking> Occurrences { get; set; } = [];
 }
 
 public sealed class BookingAssignment : BaseEntity

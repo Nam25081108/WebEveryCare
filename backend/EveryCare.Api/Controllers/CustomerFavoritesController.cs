@@ -13,13 +13,23 @@ public sealed record CustomerFavoriteRequest(string Phone);
 public sealed class CustomerFavoritesController(AppDbContext db) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> Get([FromQuery] string phone, CancellationToken cancellationToken)
+    public async Task<IActionResult> Get([FromQuery] string phone, [FromQuery] string? serviceGroupSlug, [FromQuery] int requiredWorkers = 1, CancellationToken cancellationToken = default)
     {
         var customer = await FindCustomer(phone, cancellationToken);
         if (customer is null) return Ok(Array.Empty<object>());
 
-        var favorites = await db.FavoritePartners.AsNoTracking()
-            .Where(x => x.CustomerId == customer.Id)
+        var query = db.FavoritePartners.AsNoTracking().Where(x => x.CustomerId == customer.Id);
+        if (!string.IsNullOrWhiteSpace(serviceGroupSlug))
+        {
+            var individualService = serviceGroupSlug is "ve-sinh-phong-le" or "don-dep-van-phong-dinh-ky" or "don-dep-buong-phong";
+            query = query.Where(x =>
+                x.PartnerProfile.ServiceCapabilities.Any(capability => capability.ServiceGroup.Slug == serviceGroupSlug) &&
+                (individualService
+                    ? x.PartnerProfile.PartnerType == PartnerType.Individual
+                    : x.PartnerProfile.PartnerType == PartnerType.Team && x.PartnerProfile.TeamSize >= requiredWorkers));
+        }
+
+        var favorites = await query
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => new
             {

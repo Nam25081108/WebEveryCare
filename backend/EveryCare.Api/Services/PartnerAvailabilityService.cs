@@ -42,7 +42,7 @@ public sealed class PartnerAvailabilityService(AppDbContext db)
         if (hasDirectConflict) return false;
 
         var recurringBookings = await db.Bookings.AsNoTracking()
-            .Where(x => x.AssignedPartnerId == partnerProfileId && x.Id != excludingBookingId && x.IsRecurring && x.RecurrenceRule != null &&
+            .Where(x => x.AssignedPartnerId == partnerProfileId && x.Id != excludingBookingId && x.IsRecurring && x.RecurringContractId == null && x.RecurrenceRule != null &&
                 x.Status != BookingStatus.Cancelled && x.Status != BookingStatus.NoPartnerFound)
             .Select(x => new { x.ScheduledStartAt, x.ScheduledEndAt, x.RecurrenceRule })
             .ToListAsync(cancellationToken);

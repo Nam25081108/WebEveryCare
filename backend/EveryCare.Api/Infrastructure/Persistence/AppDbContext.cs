@@ -22,6 +22,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ServiceTool> ServiceTools => Set<ServiceTool>();
     public DbSet<ProfessionalPricingRule> ProfessionalPricingRules => Set<ProfessionalPricingRule>();
     public DbSet<Booking> Bookings => Set<Booking>();
+    public DbSet<RecurringServiceContract> RecurringServiceContracts => Set<RecurringServiceContract>();
     public DbSet<BookingAssignment> BookingAssignments => Set<BookingAssignment>();
     public DbSet<BookingExtraCharge> BookingExtraCharges => Set<BookingExtraCharge>();
     public DbSet<BookingPhoto> BookingPhotos => Set<BookingPhoto>();
@@ -226,6 +227,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasOne(x => x.ServiceGroup).WithMany().HasForeignKey(x => x.ServiceGroupId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ServicePackage).WithMany().HasForeignKey(x => x.ServicePackageId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.AssignedPartner).WithMany().HasForeignKey(x => x.AssignedPartnerId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.RecurringContract).WithMany(x => x.Occurrences).HasForeignKey(x => x.RecurringContractId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => new { x.RecurringContractId, x.OccurrenceNumber }).IsUnique().HasFilter("\"RecurringContractId\" IS NOT NULL");
+        });
+        modelBuilder.Entity<RecurringServiceContract>(entity =>
+        {
+            entity.ToTable("recurring_service_contracts");
+            entity.HasIndex(x => x.Code).IsUnique();
+            entity.Property(x => x.Code).HasMaxLength(30);
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            foreach (var property in new[] { nameof(RecurringServiceContract.EstimatedTotal), nameof(RecurringServiceContract.DepositAmount), nameof(RecurringServiceContract.RemainingAmount) })
+                entity.Property(property).HasPrecision(14, 2);
+            entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ServiceGroup).WithMany().HasForeignKey(x => x.ServiceGroupId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ServicePackage).WithMany().HasForeignKey(x => x.ServicePackageId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<BookingAssignment>(entity =>
         {
