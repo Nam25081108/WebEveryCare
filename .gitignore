@@ -5,7 +5,10 @@ node_modules/
 .nuget/
 **/bin/
 **/obj/
-backend/SachNha.Api/App_Data/
+apps/api/EveryCare.Api/App_Data/
 appsettings.Local.json
 .env*
 !.env.example
+*.log
+.tmp/
+.buildcheck/

@@ -1,16 +1,41 @@
 # EveryCare Platform
 
-EveryCare được tổ chức thành ba frontend Next.js độc lập và một ASP.NET Core Web API dùng chung.
+EveryCare là monorepo gồm ba ứng dụng Next.js độc lập và một ASP.NET Core Web API dùng chung. Việc tái cấu trúc chỉ thay đổi cách tổ chức mã nguồn; giao diện và luồng nghiệp vụ hiện tại được giữ nguyên.
 
-## Cấu trúc
+## Cấu trúc dự án
 
-- `customer-web/` — website khách hàng, chạy tại `http://localhost:3000`
-- `admin-web/` — website quản trị, chạy tại `http://localhost:3001`
-- `partner-web/` — website đối tác, chạy tại `http://localhost:3002`
-- `backend/EveryCare.Api/` — ASP.NET Core API, chạy tại `http://localhost:5185`
-- `_legacy-single-app/` — bản lưu frontend cũ trước khi tách, chỉ dùng để đối chiếu hoặc khôi phục
+```text
+everycare/
+├── apps/
+│   ├── customer-web/       # Website khách hàng (cổng 3000)
+│   ├── admin-web/          # Website quản trị (cổng 3001)
+│   ├── partner-web/        # Website đối tác (cổng 3002)
+│   └── api/                # ASP.NET Core API (cổng 5185)
+├── archive/
+│   └── legacy-single-app/  # Bản frontend cũ, chỉ dùng để đối chiếu
+├── database/               # Script quản trị và khởi tạo PostgreSQL
+├── docs/                   # Tài liệu kiến trúc và quy ước dự án
+├── package.json            # Workspace và lệnh dùng chung
+└── NuGet.Config            # Cấu hình package .NET
+```
 
-Ba frontend không truy cập PostgreSQL trực tiếp và không gọi nội bộ lẫn nhau. Dữ liệu nghiệp vụ được trao đổi qua `EveryCare.Api`.
+Mỗi frontend sử dụng cấu trúc thống nhất:
+
+```text
+apps/<web-app>/
+├── public/                 # Tài nguyên tĩnh
+├── src/
+│   ├── app/                # Next.js App Router và stylesheet cấp trang
+│   ├── components/         # UI/layout dùng chung trong ứng dụng
+│   ├── features/           # Mã được nhóm theo nghiệp vụ
+│   └── lib/                # Cấu hình và tiện ích dùng chung
+├── .env.example
+├── next.config.ts
+├── package.json
+└── tsconfig.json
+```
+
+API tiếp tục được tổ chức theo các lớp `Domain`, `Contracts`, `Services`, `Infrastructure` và `Controllers` trong `apps/api/EveryCare.Api`.
 
 ## Cài đặt
 
@@ -18,17 +43,13 @@ Ba frontend không truy cập PostgreSQL trực tiếp và không gọi nội b�
 npm install
 ```
 
-Thiết lập mật khẩu PostgreSQL cục bộ (thay `MAT_KHAU_POSTGRES_CUA_BAN` bằng mật khẩu thật):
+Thiết lập mật khẩu PostgreSQL bằng .NET User Secrets:
 
 ```powershell
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=everycare;Username=postgres;Password=MAT_KHAU_POSTGRES_CUA_BAN" --project backend\EveryCare.Api\EveryCare.Api.csproj
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=everycare;Username=postgres;Password=MAT_KHAU_POSTGRES_CUA_BAN" --project apps\api\EveryCare.Api\EveryCare.Api.csproj
 ```
 
-Mật khẩu được lưu trong .NET User Secrets của máy, không được ghi vào Git.
-
 ## Chạy dự án
-
-Mở bốn cửa sổ PowerShell tại thư mục gốc và chạy:
 
 ```powershell
 npm run dev:api
@@ -44,4 +65,4 @@ npm run typecheck
 npm run build
 ```
 
-Mỗi frontend có `.env.example` riêng để cấu hình URL API và URL của hai website còn lại.
+Xem thêm [quy ước cấu trúc dự án](docs/architecture/project-structure.md).

@@ -3,16 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "customer-web",
-    "admin-web",
-    "partner-web"
+    "apps/customer-web",
+    "apps/admin-web",
+    "apps/partner-web"
   ],
   "scripts": {
     "dev:customer": "npm run dev --workspace @everycare/customer-web",
     "dev:admin": "npm run dev --workspace @everycare/admin-web",
     "dev:partner": "npm run dev --workspace @everycare/partner-web",
-    "dev:api": "dotnet run --project backend/EveryCare.Api/EveryCare.Api.csproj --launch-profile http",
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "dev:api": "dotnet run --project apps/api/EveryCare.Api/EveryCare.Api.csproj --launch-profile http",
+    "build:web": "npm run build --workspaces --if-present",
+    "build:api": "dotnet build apps/api/EveryCare.Api/EveryCare.Api.csproj",
+    "build": "npm run build:web && npm run build:api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "check": "npm run typecheck && npm run build:api"
   }
 }
